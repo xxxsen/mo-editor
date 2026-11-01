@@ -1,0 +1,121 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Analysis workflow check</title></head><body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="900"></iframe>
+<script>
+const result=document.querySelector('#result'), frame=document.querySelector('#subject');
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const check=(condition,message)=>{if(!condition)throw Error(message)};
+const rules=`[InfantryTypes]
+0=VIRUS
+1=OTHER
+[VehicleTypes]
+0=TANK
+[BuildingTypes]
+0=BARRACKS_A
+1=BARRACKS_B
+2=TECHBUILDING
+[Countries]
+0=Psi
+1=Allies
+[WeaponTypes]
+0=GUN
+[Warheads]
+0=HIT
+1=BOMB
+[Projectiles]
+0=SHOT
+[GenericPrerequisites]
+GROUP=BARRACKS_A,BARRACKS_B
+[ArmorTypes]
+viru=plate
+[VIRUS]
+Name=病毒
+Owner=Psi
+TechLevel=5
+Prerequisite=GROUP,TECHBUILDING
+Prerequisite.Lists=1
+Prerequisite.List1=BARRACKS_A
+Primary=GUN
+ElitePrimary=GUN
+Armor=viru
+[OTHER]
+Name=其他步兵
+Primary=GUN
+Armor=plate
+[TANK]
+Name=坦克
+Armor=plate
+[BARRACKS_A]
+Name=甲兵营
+[BARRACKS_B]
+Name=乙兵营
+[TECHBUILDING]
+Name=科技
+[GUN]
+Damage=200
+ROF=50
+Projectile=SHOT
+Warhead=HIT
+IvanBomb.Damage=100
+[SHOT]
+AA=no
+[HIT]
+IvanBomb=yes
+Verses=100%,100%,80%,50%,50%,50%,10%,10%,10%,100%,100%
+Versus.viru=75%
+[BOMB]
+Verses=100%,100%,50%,50%,50%,50%,10%,10%,10%,100%,100%
+[CombatDamage]
+IvanWarhead=BOMB
+IvanTimedDelay=160
+`;
+frame.addEventListener('load',async()=>{
+ try{
+  const w=frame.contentWindow,d=frame.contentDocument;
+  await delay(120);
+  const transfer=new w.DataTransfer();transfer.items.add(new w.File([rules],'rulesmo.ini'));
+  const input=d.querySelector('#file-input');input.files=transfer.files;input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  for(let i=0;i<150&&!d.body.textContent.includes('病毒');i++)await delay(20);
+  check(d.querySelector('[data-action="build-analysis"]'),'unit tools not shown');
+  d.querySelector('[data-action="build-analysis"]').click();
+  let dialog=d.querySelector('#editor-dialog');
+  const country=dialog.querySelector('[data-build-country]');country.value='Allies';country.dispatchEvent(new w.Event('change',{bubbles:true}));
+  const tech=dialog.querySelector('[data-build-tech]');tech.value='4';tech.dispatchEvent(new w.Event('change',{bubbles:true}));
+  check(dialog.textContent.includes('所选国家 Allies 不在列表中')&&dialog.textContent.includes('对象为 5，选择的对局等级为 4'),'country or technology diagnosis missing');
+  const enable=dialog.querySelector('[data-build-inventory-enabled]');enable.checked=true;enable.dispatchEvent(new w.Event('change',{bubbles:true}));
+  const owned=dialog.querySelector('[data-build-owned="BARRACKS_A"]');owned.checked=true;owned.dispatchEvent(new w.Event('change',{bubbles:true}));
+  check(dialog.textContent.includes('GROUP：以下任一 BARRACKS_A、BARRACKS_B'),'generic prerequisites missing');
+  check([...dialog.querySelectorAll('.analysis-row')].some(row=>row.textContent.includes('Prerequisite.List1')&&row.textContent.includes('符合所选条件')),'alternative prerequisite not evaluated');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-action="weapon-analysis"]').click();dialog=d.querySelector('#editor-dialog');
+  let search=dialog.querySelector('[data-effect-search]');search.value='病毒';search.dispatchEvent(new w.Event('input',{bubbles:true}));
+  check(dialog.textContent.includes('数值乘积：150')&&dialog.textContent.includes('数值乘积：50'),'direct and bomb effects not separated');
+  check(dialog.textContent.includes('仅用于理解配置'),'result limitation not shown');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-tab="relations"]').click();d.querySelector('[data-jump="GUN"]').click();
+  check(d.querySelector('.usage-notice').textContent.includes('其他步兵'),'shared users not shown before editing');
+  d.querySelector('[data-tab="raw"]').click();check(d.querySelector('.usage-notice'),'raw editor lost shared-use warning');
+  let damage=d.querySelector('[data-field="Damage"]');damage.value='234';damage.dispatchEvent(new w.Event('change',{bubbles:true}));
+  d.querySelector('[data-action="nav-back"]').click();
+  d.querySelector('[data-tab="basic"]').click();
+  d.querySelector('[data-action="isolate-weapon"]').click();dialog=d.querySelector('#editor-dialog');
+  for(const key of ['projectile','warhead','bomb']) dialog.querySelector(`[data-isolate-copy="${key}"]`).checked=true;
+  dialog.querySelector('[data-isolate-next]').click();
+  check(dialog.textContent.includes('GUN_COPY')&&dialog.textContent.includes('全局默认'),'copy preview missing generated IDs or default bomb');
+  dialog.querySelector('[data-editor-close]').click();
+  check(d.querySelector('[data-action="changes"]').textContent.includes('1'),'cancelling preview modified the project');
+  d.querySelector('[data-action="isolate-weapon"]').click();dialog=d.querySelector('#editor-dialog');
+  for(const key of ['projectile','warhead','bomb']) dialog.querySelector(`[data-isolate-copy="${key}"]`).checked=true;
+  dialog.querySelector('[data-isolate-next]').click();dialog.querySelector('[data-isolate-apply]').click();
+  check(d.body.textContent.includes('[GUN_COPY]')&&d.querySelector('[data-field="Damage"]')?.value==='234','copied weapon did not retain unsaved edit');
+  d.querySelector('[data-jump-field="Warhead"]').click();
+  check(d.body.textContent.includes('[HIT_COPY]'),'copied warhead not linked');
+  d.querySelector('[data-action="isolate-weapon"]').click();dialog=d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-isolate-unit]').value==='VIRUS'&&dialog.querySelector('[data-isolate-copy="warhead"]').checked,'warhead entry did not find current unit or select target');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-action="changes"]').click();
+  const changes=d.querySelector('#changes-dialog');
+  check(changes.textContent.includes('Primary')&&changes.textContent.includes('GUN_COPY'),'unit weapon replacement missing from changes');
+  check(!changes.textContent.includes('ElitePrimary:'),'unselected elite slot was changed');
+  result.textContent='PASS: build conditions, alternate prerequisites, weapon and bomb comparison, shared-use warning, copy preview/cancel/apply, draft preservation and targeted rewiring';
+ }catch(error){result.textContent='FAIL: '+error.stack}
+});
+</script></body></html>

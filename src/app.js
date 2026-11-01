@@ -8,6 +8,8 @@ import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from 
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature, garrisonWeaponWarning, passengerWeapons, preparePassengerFire } from './quick-features.js';
+import { unitWeaponSlots, prepareIsolatedWeapon } from './object-impact.js';
+import { analyzeConstruction, analyzeWeaponEffect } from './rule-analysis.js';
 import { compareHistoryBytes } from './history-diff.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
@@ -468,6 +470,7 @@ const superweaponBasic = ['Type', 'RechargeTime', 'Action', 'Money.Amount', 'IsP
 const superweaponEffects = ['SW.Range', 'SW.Damage', 'SW.Warhead', 'SW.Deferment', 'SW.RangeMinimum', 'SW.RangeMaximum', 'SW.AffectsHouse', 'SW.AffectsTarget', 'SW.AITargeting', 'SW.RequiredHouses', 'SW.ForbiddenHouses'];
 
 function actualEntity(entity) {
+  if (!entity) return null;
   return entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
 }
 function quickFeatureButton(entity) {
@@ -670,11 +673,15 @@ function renderVerses(entity) {
   return `<div class="section-head"><div><h3>装甲伤害修正</h3><p>按原版 11 类装甲顺序显示；未设置的项不会自动填充。0%、1%、2% 还可能影响选敌和开火行为。</p></div><span class="section-num">VERSES</span></div><div class="verses-grid">${inputs}</div><div class="field-source" title="${h(source)}">来源：${h(source)}${values.length > 11 ? ` · 另有 ${values.length - 11} 项原始值保留在全部属性中` : ''}</div>${custom.size ? `<details class="armor-overrides" id="armor-overrides" ${state.armorOpen ? 'open' : ''}><summary><span>扩展装甲修正 <small>已单独设置 ${explicit} / ${custom.size}</small></span>${icon('chevron', 14)}</summary><div class="armor-overrides-content"><p>留空表示没有单独设置；默认值由装甲定义及其他规则决定。</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="armor-search" type="search" value="${h(state.armorSearch)}" placeholder="搜索扩展装甲代码..." aria-label="搜索扩展装甲"></div><div class="armor-overrides-list">${rows}</div></div></details>` : ''}`;
 }
 
+function analysisActions(entity) {
+  const tools = unitTypes.has(entity.type) ? '<button type="button" class="btn sm" data-action="build-analysis">建造条件诊断</button><button type="button" class="btn sm" data-action="isolate-weapon">复制关联武器</button><button type="button" class="btn sm" data-action="weapon-analysis">武器效果对照</button>' : entity.type === 'weapon' ? '<button type="button" class="btn sm" data-action="isolate-weapon">为单位复制武器</button><button type="button" class="btn sm" data-action="weapon-analysis">武器效果对照</button>' : ['warhead', 'projectile'].includes(entity.type) ? '<button type="button" class="btn sm" data-action="isolate-weapon">为单位复制关联武器</button>' : '';
+  return tools ? `<div class="analysis-actions">${tools}</div>` : '';
+}
 function renderBasic(entity) {
   const isUnit = unitTypes.has(entity.type);
   const fields = entity.type === 'weapon' ? weaponBasic : entity.type === 'projectile' ? projectileBasic : entity.type === 'warhead' ? warheadBasic : entity.type === 'superweapon' ? superweaponBasic : unitBasic;
   const title = isUnit ? '单位属性' : entity.type === 'weapon' ? '武器属性' : entity.type === 'projectile' ? '投射物属性' : entity.type === 'superweapon' ? '超级武器属性' : '弹头属性';
-  let body = `<div class="detail-body">${usageMarkup(entity)}<div class="section-head"><div><h3>${title}</h3><p>编辑现有值，或为未定义的属性添加值。</p></div><span class="section-num">01 / GENERAL</span></div><div class="field-grid">${fields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
+  let body = `<div class="detail-body">${usageMarkup(entity)}${analysisActions(entity)}<div class="section-head"><div><h3>${title}</h3><p>编辑现有值，或为未定义的属性添加值。</p></div><span class="section-num">01 / GENERAL</span></div><div class="field-grid">${fields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (isUnit) {
     const extraHouses = ['RequiredHouses', 'ForbiddenHouses'].filter(key => state.project.get(entity.id, key));
     body += `<div class="block-divider"></div><div class="section-head"><div><h3>建造与武装</h3><p>选择国家和建造条件；实际可建造性还受其他规则影响。</p></div><span class="section-num">02 / LOADOUT</span></div><div class="field-grid">${[...unitAdvanced, ...extraHouses].map(key => fieldMarkup(entity, key)).join('')}</div>`;
@@ -723,14 +730,15 @@ function superweaponsReferencing(id, keys) {
 }
 function usageMarkup(entity) {
   if (entity.type === 'projectile') {
-    const count = weaponsReferencingProjectile(entity.id).length;
-    return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个武器引用此投射物</strong><p>修改会影响引用它的武器；未加载或其他特殊引用可能未列出。</p></div>${count ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+    const weapons = weaponsReferencingProjectile(entity.id), count = weapons.length;
+    return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个武器引用此投射物</strong><p>修改会影响引用它的武器；未加载或其他特殊引用可能未列出。</p>${count ? `<p>例如：${h(weapons.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
   }
   if (!['weapon', 'warhead'].includes(entity.type)) return '';
   const weapon = entity.type === 'weapon';
-  const count = weapon ? referencesTo(entity.id).length : weaponsReferencingWarhead(entity.id).length;
+  const users = weapon ? referencesTo(entity.id) : weaponsReferencingWarhead(entity.id).map(item => item.weapon);
+  const count = users.length;
   const supers = superweaponsReferencing(entity.id, weapon ? ['WeaponType', 'Nuke.Payload'] : ['SW.Warhead']).length;
-  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p></div>${count || supers ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p>${count ? `<p>例如：${h(users.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count || supers ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
 }
 function grantedSuperweapons(entity) {
   return ['SuperWeapon', 'SuperWeapon2', 'SuperWeapons'].flatMap(key => val(entity.id, key).split(',')
@@ -792,7 +800,7 @@ function renderRelations(entity) {
 }
 function renderRaw(entity) {
   const fields = [...state.project.section(entity.id).fields.values(), ...pendingFields(entity.id).map(name => ({ name, value: '', pending: true }))];
-  return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
+  return `<div class="detail-body">${usageMarkup(entity)}${analysisActions(entity)}<div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
     return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', field.pending ? '未配置，填写后加入待保存修改' : `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line?.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" ${field.pending ? 'placeholder="未配置"' : ''} autocomplete="off" spellcheck="false">${structuredChoiceMarkup(entity, field.name)}${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}${field.pending ? `<button type="button" class="split-button" data-action="remove-pending-field" data-key="${h(field.name)}" aria-label="移除未设置的 ${h(info.label)}">移除</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;
@@ -1019,6 +1027,12 @@ app.addEventListener('click', event => {
     openCreateObject(true);
   } else if (button.dataset.action === 'quick-feature') {
     openQuickFeature();
+  } else if (button.dataset.action === 'isolate-weapon') {
+    openWeaponIsolation();
+  } else if (button.dataset.action === 'build-analysis') {
+    openBuildAnalysis();
+  } else if (button.dataset.action === 'weapon-analysis') {
+    openWeaponAnalysis();
   } else if (button.dataset.action === 'choose-main') {
     openMainFilePicker();
   } else if (button.dataset.action === 'open') fileInput.click();
@@ -1405,6 +1419,132 @@ function quickFieldControl(field) {
   if (!value || field.allowClear) options.unshift({ id: '', label: value ? '使用默认值（移除已加载的定义）' : field.required ? '请选择' : '未设置（使用默认值）' });
   return `<select ${attr}>${options.map(option => `<option value="${h(option.id)}" ${option.id === value ? 'selected' : ''}>${h(option.label)}</option>`).join('')}</select>`;
 }
+function openWeaponIsolation() {
+  const project = state.project;
+  const current = actualEntity(entityFor(state.selected, state.selectedType) || entityFor(state.selected));
+  if (!current) return;
+  const matches = slot => {
+    if (unitTypes.has(current.type)) return true;
+    if (current.type === 'weapon') return lower(slot.id) === lower(current.id);
+    if (current.type === 'projectile') return lower(project.get(slot.id, 'Projectile')?.value.trim()) === lower(current.id);
+    if (current.type === 'warhead') return weaponWarheadReferences(project, slot.id).some(ref => lower(ref.id) === lower(current.id));
+    return false;
+  };
+  const units = state.entities.filter(item => unitTypes.has(item.type) && item.exists
+    && (unitTypes.has(current.type) ? lower(item.id) === lower(current.id) : unitWeaponSlots(project, item.id).some(matches)));
+  let plan = null;
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">复制关联武器</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-isolate-form><p>为选中的单位武器槽创建独立武器；可继续复制它的弹头和投射物。只替换选中的武器槽，未勾选的关联对象仍会共享。</p>${units.length ? `<div class="editor-fields"><label>单位<select data-isolate-unit>${units.map(item => `<option value="${h(item.id)}">${h(item.name)} [${h(item.id)}]</option>`).join('')}</select></label><label>武器槽<select data-isolate-slot></select></label><div data-isolate-options></div></div>` : '<div class="quick-warnings">没有找到可复制的已登记单位武器引用。未加载和特殊逻辑中的引用可能不会列出。</div>'}</div><div data-isolate-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-isolate-back hidden>返回修改</button>${units.length ? '<button type="button" class="btn primary" data-isolate-next>预览复制</button><button type="button" class="btn primary" data-isolate-apply hidden>确认复制</button>' : ''}</div>`;
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  if (!units.length) { editorDialog.showModal(); return; }
+  const unit = editorDialog.querySelector('[data-isolate-unit]'), slot = editorDialog.querySelector('[data-isolate-slot]');
+  const options = editorDialog.querySelector('[data-isolate-options]');
+  const form = editorDialog.querySelector('[data-isolate-form]'), preview = editorDialog.querySelector('[data-isolate-preview]');
+  const back = editorDialog.querySelector('[data-isolate-back]'), next = editorDialog.querySelector('[data-isolate-next]'), apply = editorDialog.querySelector('[data-isolate-apply]');
+  function drawOptions() {
+    const weapon = unitWeaponSlots(project, unit.value).find(item => item.key === slot.value);
+    if (!weapon || !weapon.exists) { options.innerHTML = '<div class="quick-warnings">没有找到所选武器的定义，无法复制。</div>'; next.disabled = true; return; }
+    next.disabled = false;
+    const projectile = project.get(weapon.id, 'Projectile')?.value.trim() || '';
+    const refs = weaponWarheadReferences(project, weapon.id);
+    const direct = refs.find(ref => ref.key === 'Warhead'), bomb = refs.find(ref => ref.key === 'IvanBomb.Warhead');
+    const checkbox = (key, label, id, note = '') => {
+      const enabled = id && project.section(id), checked = enabled && lower(id) === lower(current.id) && ((key === 'projectile' && current.type === 'projectile') || (key !== 'projectile' && current.type === 'warhead'));
+      return `<label class="analysis-check"><input type="checkbox" data-isolate-copy="${key}" ${enabled ? '' : 'disabled'} ${checked ? 'checked' : ''}><span>${h(label)}：<strong>${h(id || '未配置')}</strong>${note ? ` <small>${h(note)}</small>` : ''}${id && !enabled ? ' <small>未找到定义</small>' : ''}</span></label>`;
+    };
+    options.innerHTML = `<div class="analysis-card"><strong>将复制武器 [${h(weapon.id)}]</strong><p>同时复制以下对象（可选）：</p>${checkbox('projectile', '投射物', projectile)}${checkbox('warhead', '命中弹头', direct?.id)}${checkbox('bomb', '炸弹弹头', bomb?.id, bomb?.source === 'global' ? '当前为全局默认' : '')}<p>复制投射物时，其子武器等其他引用仍保持共享；复制弹头也不会复制其动画等资源。</p></div>`;
+  }
+  function drawSlots() {
+    const slots = unitWeaponSlots(project, unit.value).filter(matches);
+    slot.innerHTML = slots.map(item => `<option value="${h(item.key)}">${h(item.key)} → ${h(item.id)}${item.exists ? '' : '（未定义）'}</option>`).join('');
+    drawOptions();
+  }
+  unit.addEventListener('change', drawSlots);
+  slot.addEventListener('change', drawOptions);
+  back.addEventListener('click', () => { plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false; editorDialog.querySelector('[data-editor-error]')?.remove(); });
+  next.addEventListener('click', () => {
+    try {
+      if (state.project !== project) throw new Error('当前项目已改变，请重新打开窗口。');
+      const checked = key => !!options.querySelector(`[data-isolate-copy="${key}"]`)?.checked;
+      plan = prepareIsolatedWeapon(project, { unit: unit.value, slot: slot.value, copyProjectile: checked('projectile'), copyWarhead: checked('warhead'), copyBombWarhead: checked('bomb'), reservedIds: state.entities.map(item => item.id) });
+      preview.innerHTML = `<p>确认后加入未保存修改，点击主界面的「保存」才会写入文件。</p><div class="analysis-card"><strong>新增对象与登记</strong>${plan.copies.map(item => `<p>${h(labelFor(item.type))}：<code>${h(item.from)}</code> → <code>${h(item.to)}</code><br><small>${h(sourceName(item.definitionFile))}；[${h(item.registry)}] ${h(item.registryIndex)}=${h(item.to)}</small></p>`).join('')}</div><div class="analysis-card"><strong>修改引用</strong>${plan.rewires.map(item => `<p>[${h(item.section)}] ${h(item.key)}：<code>${h(item.before)}</code> → <code>${h(item.after)}</code></p>`).join('')}</div><p>只替换此单位的 ${h(plan.slot)}；其他武器槽、单位和未勾选的关联对象保持原引用。未加载或特殊逻辑中的引用可能未列出。</p>`;
+      form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
+      editorDialog.querySelector('[data-editor-error]')?.remove(); apply.focus({ preventScroll: true });
+    } catch (error) { showEditorError(error.message); }
+  });
+  apply.addEventListener('click', () => {
+    if (!plan || state.project !== project) { showEditorError('当前项目已改变，请重新预览。'); return; }
+    state.project = plan.project; state.entities = buildEntities();
+    editorDialog.close();
+    selectEntity(plan.weaponCopy, 'weapon', `为 ${plan.unit} 复制`);
+    showToast(`已复制武器并替换 [${plan.unit}] ${plan.slot}；点击保存后写入。`);
+  });
+  drawSlots(); editorDialog.showModal(); unit.focus({ preventScroll: true });
+}
+
+function openBuildAnalysis() {
+  const project = state.project, entity = actualEntity(entityFor(state.selected, state.selectedType) || entityFor(state.selected));
+  if (!entity || !unitTypes.has(entity.type)) return;
+  const ownerValues = ['Owner', 'RequiredHouses', 'ForbiddenHouses'].flatMap(key => val(entity.id, key).split(',').map(item => item.trim()).filter(Boolean));
+  const countries = countriesFor(project, state.resources?.strings, '', ownerValues, state.resources?.clientSides);
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">建造条件诊断 · ${h(entity.name)} [${h(entity.id)}]</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>根据当前已加载规则和你提供的对局条件检查。编辑器不能读取游戏中实时状态，也无法覆盖地图、模式及所有扩展逻辑。</p><div class="analysis-controls"><label>所选国家<select data-build-country><option value="">未指定</option>${countries.map(item => `<option value="${h(item.id)}">${h(item.label)} [${h(item.id)}]</option>`).join('')}</select></label><label>对局科技等级<select data-build-tech><option value="">未指定</option>${Array.from({length: 13}, (_, i) => `<option value="${i}">${i}</option>`).join('')}</select></label></div><label class="analysis-check"><input type="checkbox" data-build-inventory-enabled><span>提供当前已拥有的相关对象，用于检查前置组</span></label><div data-build-inventory hidden></div><div data-build-results></div></div><div class="dialog-actions"><button type="button" class="btn" data-editor-close>关闭</button></div>`;
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  const country = editorDialog.querySelector('[data-build-country]'), tech = editorDialog.querySelector('[data-build-tech]');
+  const enabled = editorDialog.querySelector('[data-build-inventory-enabled]'), inventory = editorDialog.querySelector('[data-build-inventory]'), results = editorDialog.querySelector('[data-build-results]');
+  const initial = analyzeConstruction(project, { id: entity.id, type: entity.type });
+  const ids = unique([...initial.prerequisiteLists.flatMap(list => list.requirements.flatMap(req => req.options)), ...initial.factories.map(item => item.id), ...initial.extraFields.filter(field => /^(?:BuiltAt|PrerequisiteOverride|Prerequisite\.Negative)$/i.test(field.key)).flatMap(field => field.value.split(',').map(value => value.trim()))].filter(Boolean));
+  inventory.innerHTML = ids.length ? `<div class="analysis-inventory">${ids.map(id => { const target = entityFor(id); return `<label class="analysis-check"><input type="checkbox" data-build-owned="${h(id)}"><span>${h(target?.name || id)}${target && lower(target.name) !== lower(id) ? ` [${h(id)}]` : ''}</span></label>`; }).join('')}</div><p>未勾选表示在这次模拟中未拥有；只列出与前置、生产建筑及部分限制有关的对象。</p>` : '<p>当前没有可列出的相关对象。</p>';
+  function draw() {
+    inventory.hidden = !enabled.checked;
+    const owned = enabled.checked ? [...inventory.querySelectorAll('[data-build-owned]:checked')].map(input => input.dataset.buildOwned) : null;
+    const report = analyzeConstruction(project, { id: entity.id, type: entity.type, country: country.value, techLevel: tech.value, inventory: owned });
+    const status = value => ({ ok: '符合所选条件', warn: '请检查', unknown: '待确认' })[value];
+    const checks = report.checks.map(item => `<div class="analysis-row ${h(item.status)}"><div><strong>${h(item.label)}</strong><span>${h(status(item.status))}</span></div><p>${h(item.detail)}</p></div>`).join('');
+    const lists = report.prerequisiteLists.map(list => `<div class="analysis-row ${h(list.status)}"><div><strong>${h(list.key)}${report.prerequisiteLists.length > 1 ? '（任一前置组满足即可）' : ''}</strong><span>${h(status(list.status))}</span></div>${list.requirements.length ? list.requirements.map(req => `<p>${h(req.id)}${req.kind === 'group' ? `：${req.options.length ? `以下任一 ${h(req.options.join('、'))}` : '建筑组为空或无法确认'} <small>${h(req.source)}${req.alternate ? '，含替代对象' : ''}${req.unresolved ? '，含未确认的配置' : ''}</small>` : req.unresolved ? '（未找到已登记的建筑定义）' : ''}</p>`).join('') : '<p>该组为空；还需检查其他建造条件。</p>'}</div>`).join('');
+    const selectedFactories = owned && report.factories.filter(item => owned.some(id => lower(id) === lower(item.id)));
+    const factories = `<div class="analysis-card"><strong>同类生产建筑</strong><p>${report.factories.length ? `已从建筑的 Factory 字段识别 ${report.factories.length} 个候选${owned ? `；本次勾选了 ${selectedFactories.length} 个` : ''}。` : '未在已加载的建筑登记中找到对应 Factory 字段。'}</p>${report.factories.length ? `<details><summary>查看候选建筑</summary><p>${report.factories.map(item => `${h(entityFor(item.id)?.name || item.id)} [${h(item.id)}]${item.explicitOnly ? '（需明确指定 BuiltAt）' : ''}`).join('、')}</p></details>` : ''}<p>候选只按生产类型识别；归属、海军类型、BuiltAt、占领状态及其他条件仍可能限制生产。</p></div>`;
+    const extras = report.extraFields.length ? `<div class="analysis-card"><strong>其他可能影响建造的字段</strong>${report.extraFields.map(field => `<p><code>${h(field.key)}=${h(field.value)}</code></p>`).join('')}<p>这些字段、被占领建筑、地图和模式的影响需要结合游戏状态检查。</p></div>` : '';
+    results.innerHTML = `${report.incomplete.length ? `<div class="quick-warnings">规则加载不完整：${h(report.incomplete[0])}。以下结果只能参考已加载内容。</div>` : ''}<div class="analysis-results">${checks}${lists}</div>${factories}${extras}<p>前置组检查只依据你勾选的对象；前置覆盖、被占领的生产建筑和其他规则可能改变结果。</p>`;
+  }
+  country.addEventListener('change', draw); tech.addEventListener('change', draw); enabled.addEventListener('change', draw); inventory.addEventListener('change', draw);
+  draw(); editorDialog.showModal(); country.focus({ preventScroll: true });
+}
+
+function openWeaponAnalysis() {
+  const project = state.project, current = actualEntity(entityFor(state.selected, state.selectedType) || entityFor(state.selected));
+  if (!current) return;
+  const slots = unitTypes.has(current.type) ? unitWeaponSlots(project, current.id).filter(item => item.exists) : current.type === 'weapon' ? [{ key: '武器', id: current.id, exists: true }] : [];
+  const targets = state.entities.filter(item => unitTypes.has(item.type) && item.exists);
+  let selectedTarget = targets.find(item => lower(item.id) !== lower(current.id))?.id || targets[0]?.id || '';
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">武器效果对照</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>选择武器和目标，查看命中、炸弹及装甲修正的配置。下面的乘积仅用于理解配置，不代表实战伤害或能否开火。</p>${slots.length && targets.length ? `<div class="analysis-controls"><label>武器<select data-effect-weapon>${slots.map(item => `<option value="${h(item.id)}">${h(item.key)} → ${h(item.id)}</option>`).join('')}</select></label><label>搜索目标<input type="search" data-effect-search placeholder="搜索中文名或代码"></label></div><label class="analysis-target-label">选择目标<select size="6" data-effect-target aria-label="选择目标单位"></select></label><div data-effect-results></div>` : '<div class="quick-warnings">没有找到可分析的武器或已定义目标。</div>'}</div><div class="dialog-actions"><button type="button" class="btn" data-editor-close>关闭</button></div>`;
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  if (!slots.length || !targets.length) { editorDialog.showModal(); return; }
+  const weapon = editorDialog.querySelector('[data-effect-weapon]'), search = editorDialog.querySelector('[data-effect-search]'), target = editorDialog.querySelector('[data-effect-target]'), results = editorDialog.querySelector('[data-effect-results]');
+  function renderResult() {
+    if (!selectedTarget) { results.innerHTML = '<p>没有匹配的目标，请调整搜索内容。</p>'; return; }
+    const report = analyzeWeaponEffect(project, weapon.value, selectedTarget);
+    const display = number => Number.isFinite(number) ? String(Number(number.toPrecision(8))) : '无法计算';
+    const stages = report.stages.map(stage => `<div class="analysis-card"><strong>${h(stage.label)}${stage.enabled === false ? '（未确认启用）' : ''}</strong><p>弹头：<code>${h(stage.warhead || '未配置')}</code>${stage.warheadSource ? ` · ${h(stage.warheadSource)}` : ''}<br>配置伤害：<code>${h(stage.damage || '未配置')}</code> · ${h(stage.source)}${stage.delay ? `<br>炸弹延迟：${h(stage.delay)}` : ''}</p><p>装甲修正：<strong>${stage.modifier.value === null ? h(stage.modifier.reason) : `${h(display(stage.modifier.value * 100))}%`}</strong>${stage.product === null ? '' : `；数值乘积：<strong>${h(display(stage.product))}</strong>`}</p>${stage.modifier.path.length ? `<p class="analysis-path">${stage.modifier.path.map(h).join('<br>→ ')}</p>` : ''}${stage.enabled === false ? '<p>直接命中弹头未确认启用 IvanBomb；炸弹字段仅作配置展示。</p>' : ''}</div>`).join('');
+    const projectile = report.projectile ? `<p>投射物：<code>${h(report.projectile)}</code>${report.projectileFields.length ? ` · ${report.projectileFields.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}` : ' · 未配置已识别的目标类型字段'}</p>` : '<p>未配置投射物。</p>';
+    const targeting = report.targeting.length ? `<p>已配置目标选择：${report.targeting.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}。</p>` : '';
+    const special = report.specialFields.length ? `<p>武器特殊字段：${report.specialFields.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}。</p>` : '';
+    results.innerHTML = `${report.incomplete.length ? `<div class="quick-warnings">规则加载不完整：${h(report.incomplete[0])}。</div>` : ''}<div class="analysis-card"><strong>目标装甲：${h(report.armor || '未配置')}</strong>${projectile}${targeting}${special}</div>${stages}<p>特殊伤害、免疫、射程、弹片、扩散、经验、模式和其他规则都可能改变实际效果。0%、1%、2% 的装甲修正还可能影响选敌；单独设置的目标选择字段也可能改变这些行为。</p>`;
+  }
+  let searchComposing = false;
+  function drawTargets() {
+    const query = lower(search.value.trim());
+    const filtered = targets.filter(item => !query || lower(`${item.name} ${item.originalName} ${item.id}`).includes(query));
+    if (!filtered.some(item => lower(item.id) === lower(selectedTarget))) selectedTarget = filtered[0]?.id || '';
+    target.innerHTML = filtered.map(item => `<option value="${h(item.id)}" ${lower(item.id) === lower(selectedTarget) ? 'selected' : ''}>${h(item.name)} [${h(item.id)}] · ${h(labelFor(item.type))}</option>`).join('');
+    renderResult();
+  }
+  search.addEventListener('compositionstart', () => { searchComposing = true; });
+  search.addEventListener('compositionend', () => { searchComposing = false; drawTargets(); });
+  search.addEventListener('input', () => { if (!searchComposing) drawTargets(); });
+  target.addEventListener('change', () => { selectedTarget = target.value; renderResult(); });
+  weapon.addEventListener('change', renderResult);
+  drawTargets(); editorDialog.showModal(); search.focus({ preventScroll: true });
+}
+
 function quickReferenceInfo(project, kind, raw) {
   if (!['weapon', 'superweapon', 'superweapons'].includes(kind)) return '';
   const ids = String(raw || '').split(',').map(item => item.trim()).filter(id => id && !/^(none|<none>)$/i.test(id));

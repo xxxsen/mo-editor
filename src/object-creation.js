@@ -17,7 +17,13 @@ const lower = value => String(value ?? '').trim().toLowerCase();
 export const MAX_GAME_OBJECT_ID_LENGTH = 24;
 
 // Prepare on a fork: a failed validation or a cancelled preview leaves the project untouched.
-export function prepareObjectCreation(project, { type, id, template = '', reservedIds = [] }) {
+export function prepareObjectCreation(project, options) {
+  return createObjectOnCandidate(project.fork(), options);
+}
+
+// Only use on an isolated candidate: callers discard the candidate if any step fails.
+export function createObjectOnCandidate(candidate, { type, id, template = '', reservedIds = [] }) {
+  const project = candidate;
   const kind = CREATE_TYPES.find(item => item.id === type);
   id = String(id ?? '').trim();
   if (!kind) throw new Error('请选择支持的对象类型。');
@@ -30,7 +36,6 @@ export function prepareObjectCreation(project, { type, id, template = '', reserv
   const source = template ? project.section(template) : null;
   if (template && !source) throw new Error(`找不到模板规则段 [${template}]。`);
 
-  const candidate = project.fork();
   const sourceCopy = source && candidate.section(source.name);
   const registry = kind.registry ? candidate.section(kind.registry) : null;
   const destination = sourceCopy?.occurrences.at(-1)?.file || registry?.occurrences.at(-1)?.file || candidate.resolve(candidate.mainPath);
