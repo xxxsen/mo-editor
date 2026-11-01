@@ -1,0 +1,41 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Main file picker check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1100" height="600"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 400; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument, transfer = new w.DataTransfer();
+  transfer.items.add(new w.File(['[VehicleTypes]\n0=ORIGINAL\n[ORIGINAL]\nName=Original Unit\n'], 'rulesmo.ini'));
+  transfer.items.add(new w.File(['[VehicleTypes]\n0=ALT\n[ALT]\nName=Alternate Unit\n'], 'rules_alt.ini'));
+  transfer.items.add(new w.File(['[Settings]\nValue=1\n'], 'Resources/ddraw2.ini'));
+  for (let i = 0; i < 280; i++) transfer.items.add(new w.File(['[Settings]\nValue=1\n'], `Resources/配置_${i}.ini`));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Original Unit', 'fixture did not load');
+  check(!d.querySelector('#main-select') && d.querySelector('[data-action="choose-main"]').textContent.includes('rulesmo.ini'), 'native main-file dropdown remains or label is incorrect');
+  d.querySelector('[data-action="choose-main"]').click();
+  let dialog = d.querySelector('#editor-dialog'), list = dialog.querySelector('[data-main-file-list]'), search = dialog.querySelector('#main-file-search');
+  check(dialog.open && d.activeElement === search, 'main-file dialog did not open or focus search');
+  check(dialog.getBoundingClientRect().top >= 0 && dialog.getBoundingClientRect().bottom <= w.innerHeight, 'main-file dialog extends outside the window');
+  check(list.scrollHeight > list.clientHeight && w.getComputedStyle(list).overflowY === 'auto', 'long main-file list does not scroll internally');
+  check(list.querySelector('.main-file-option').textContent.includes('rulesmo.ini') && list.querySelector('.is-current'), 'current main file is not visible first');
+  search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true })); search.value = '配置_279'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  check(d.activeElement === search && search.value === '配置_279' && list.textContent.includes('配置_279.ini'), 'Chinese search was interrupted');
+  search.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }));
+  check(dialog.open && d.activeElement === search, 'IME confirmation selected a file or interrupted input');
+  search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true }));
+  search.value = 'ddraw2'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  check(list.textContent.includes('Resources/ddraw2.ini') && list.querySelectorAll('[data-main-file]').length === 1, 'file path search did not find the non-rule INI');
+  dialog.querySelector('[data-editor-close]').click();
+  check(!dialog.open && d.querySelector('[data-action="choose-main"]').textContent.includes('rulesmo.ini'), 'cancel changed the main file');
+  d.querySelector('[data-action="choose-main"]').click(); dialog = d.querySelector('#editor-dialog'); search = dialog.querySelector('#main-file-search');
+  search.value = 'rules_alt'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  search.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  check(!dialog.open && d.querySelector('.detail-name h2').textContent === 'Alternate Unit', 'selecting another main file did not rebuild the project');
+  check(d.querySelector('[data-action="choose-main"]').textContent.includes('rules_alt.ini'), 'selected main file is not shown');
+  result.textContent = 'PASS: bounded searchable main-file dialog, Chinese input, cancellation and main-file selection';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

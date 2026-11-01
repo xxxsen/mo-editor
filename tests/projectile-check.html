@@ -1,0 +1,70 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Projectile editor check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[InfantryTypes]\n0=VIRUS\n1=OTHER\n[WeaponTypes]\n0=Virusgun\n1=SharedGun\n[Projectiles]\n0=RegisteredP\n1=MissingP\n[VIRUS]\nName=病毒狙击手\nPrimary=Virusgun\n[OTHER]\nName=Other\nPrimary=SharedGun\n[Virusgun]\nProjectile=InvisibleWork\nWarhead=VirusWH\n[SharedGun]\nProjectile=invisiblework\nWarhead=VirusWH\n[UnlistedGun]\nProjectile=InvisibleWork\nWarhead=VirusWH\n[Maximums]\nProjectile=123\n[VirusWH]\nCellSpread=1\n[#include]\n0=extra.ini\n`;
+  const extra = `[InvisibleWork]\nInviso=yes ; keep comment\nImage=none\nSubjectToCliffs=yes ; keep cliff\nAirburstWeapon=ChildGun\nShrapnelWeapon=MissingWeapon\nCustom.Unknown=old ; keep unknown\n[RegisteredP]\nAA=yes\nImage=BULLET\n[ChildGun]\nProjectile=ChildP\nWarhead=VirusWH\n[ChildP]\nImage=none\nAirburstWeapon=Virusgun\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini')); transfer.items.add(new w.File([extra], 'extra.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'fixture did not load');
+  d.querySelector('[data-category="projectile"]').click();
+  check(d.querySelector('[data-entity="RegisteredP"][data-type="projectile"]'), 'registered projectile not listed');
+  check(d.querySelector('[data-entity="InvisibleWork"][data-type="projectile"]'), 'weapon-referenced unregistered projectile not discovered');
+  check(d.querySelector('[data-entity="ChildP"][data-type="projectile"]'), 'child weapon projectile not discovered');
+  check(!d.querySelector('[data-entity="123"][data-type="projectile"]'), 'global numeric setting was mistaken for a projectile');
+  check(d.querySelector('[data-entity="MissingP"]').textContent.includes('未定义'), 'missing registered projectile not marked');
+  check(d.querySelectorAll('[data-entity="InvisibleWork"][data-type="projectile"]').length === 1, 'case-insensitive references created duplicates');
+  d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="VIRUS"]').click();
+  d.querySelector('[data-tab="relations"]').click(); d.querySelector('[data-jump="Virusgun"]').click();
+  check(d.querySelector('[data-field="Projectile"]').value === 'InvisibleWork', 'weapon projectile field missing');
+  d.querySelector('[data-action="choose-options"][data-kind="projectile"]').click();
+  let dialog = d.querySelector('#editor-dialog'), search = dialog.querySelector('#choice-search');
+  search.value = 'RegisteredP'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  let option = dialog.querySelector('[data-choice="RegisteredP"]'); check(option, 'projectile chooser did not find a registered projectile');
+  option.checked = true; option.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Projectile"]').value === 'RegisteredP', 'choosing a projectile did not update the weapon');
+  let field = d.querySelector('[data-field="Projectile"]'); field.value = 'InvisibleWork'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-jump-field="Projectile"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'InvisibleWork', 'weapon did not open its projectile');
+  check(d.querySelector('.navigation-trail').textContent.includes('Projectile'), 'projectile visit path missing');
+  check(d.querySelector('.usage-notice').textContent.includes('3 个武器'), 'unlisted weapon reference was not counted');
+  const label = key => d.querySelector(`[data-field="${key}"]`)?.closest('.field')?.querySelector('.field-label');
+  check(label('Inviso')?.textContent.includes('投射物不可见 / Inviso') && label('SubjectToElevation')?.title.includes('射程'), 'projectile field descriptions missing or incorrect');
+  check(d.querySelector('[data-field="AA"]').value === '' && d.querySelector('[data-action="changes"] .badge-count').textContent === '0', 'missing projectile settings were written automatically');
+  field = d.querySelector('[data-field="AA"]'); field.value = 'yes'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  field = d.querySelector('[data-field="AA"]'); check(field.querySelector('option[value=""]'), 'new boolean cannot be unset');
+  field.value = ''; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  check(d.querySelector('[data-field="AA"]').value === '' && d.querySelector('[data-action="changes"] .badge-count').textContent === '0', 'unsetting a new boolean did not remove the added field');
+  field = d.querySelector('[data-field="SubjectToCliffs"]'); field.value = 'no'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  field = d.querySelector('[data-field="AA"]'); field.value = 'yes'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  field = d.querySelector('[data-field="ROT"]'); field.value = '4'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-tab="raw"]').click();
+  field = d.querySelector('[data-field="Custom.Unknown"]'); field.value = 'edited'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-action="add-field"]').click(); dialog = d.querySelector('#editor-dialog');
+  dialog.querySelector('#new-field-name').value = 'Custom.Added'; dialog.querySelector('#new-field-value').value = '7'; dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Custom.Added"]').value === '7', 'projectile could not add a custom field');
+  d.querySelector('[data-tab="relations"]').click();
+  check(d.querySelector('[data-jump="Virusgun"]') && d.querySelector('[data-jump="SharedGun"]') && d.querySelector('[data-jump="UnlistedGun"]'), 'projectile reverse weapon links missing');
+  check(d.querySelector('[data-jump="ChildGun"]') && d.querySelector('[data-jump="MissingWeapon"]'), 'child weapon links missing');
+  d.querySelector('[data-jump="ChildGun"]').click();
+  check(d.querySelector('[data-field="Projectile"]').value === 'ChildP', 'unregistered child weapon did not open');
+  d.querySelector('[data-jump-field="Projectile"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'ChildP', 'child projectile did not open');
+  d.querySelector('[data-action="nav-back"]').click(); d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'InvisibleWork' && d.querySelector('[data-tab="relations"]').getAttribute('aria-selected') === 'true', 'back did not restore projectile context');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  const entry = [...d.querySelectorAll('.file-export')].find(item => item.textContent.includes('extra.ini')); check(entry, 'modified include absent from export');
+  entry.querySelector('[data-export]').click(); const text = await output.text();
+  check(text.includes('SubjectToCliffs=no ; keep cliff') && text.includes('AA=yes') && text.includes('ROT=4'), 'projectile settings not exported');
+  check(text.includes('Custom.Unknown=edited ; keep unknown') && text.includes('Custom.Added=7') && text.includes('Inviso=yes ; keep comment'), 'projectile export lost fields or comments');
+  result.textContent = 'PASS: projectile discovery, chooser, editing, shared references, child links, navigation and byte-preserving export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

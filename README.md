@@ -4,7 +4,7 @@
 
 ## Windows 桌面版
 
-直接运行 `dist/MentalOmegaEditor-0.1.3.exe` 即可使用。Windows 需要 WebView2 运行时。
+直接运行 `dist/MentalOmegaEditor-0.1.4.exe` 即可使用。Windows 需要 WebView2 运行时。
 
 启动桌面程序后选择游戏目录，例如 `D:\MentalOmega`。程序会记住最近打开的目录；修改后点击「保存」或按 `Ctrl+S`，直接写回对应 INI 文件。保存前会备份被覆盖的文件；如果游戏目录中的文件在打开后被其他程序修改，保存会停止并保留当前编辑内容。
 
@@ -48,8 +48,8 @@ py -m http.server 4173 --bind 127.0.0.1
 ## 使用
 
 1. 点击「导入文件夹」选择游戏目录，或通过「打开文件」一起选择 `rulesmo.ini`、`ra2md.csf` 及相关 MIX 文件。文件夹应保留 `[#include]` 使用的相对路径。
-2. 编辑器优先读取目录根部的 `rulesmo.ini`；如果不存在，就从已选 MIX 中查找并读取。页面右上角和属性来源会显示实际使用的文件；缺少 include 文件或检测到循环引用时会提示。
-3. 在左侧选择步兵、载具、飞机、建筑、超级武器、武器或弹头，搜索中文名、英文名或代码，也可按所属国家筛选。左侧搜索还会列出匹配的全局参数，可用字段名或已提供的中文名称直接定位，例如 `RepairSell` 或「建筑自动维修」。单位的国家、装甲和建造前置可以搜索选择；弹头的基础装甲伤害修正和扩展装甲修正可以逐项编辑。
+2. 编辑器优先读取目录根部的 `rulesmo.ini`；如果不存在，就从已选 MIX 中查找并读取。页面右上角和属性来源会显示实际使用的文件；点击主文件名称可在可搜索的列表中切换，缺少 include 文件或检测到循环引用时会提示。
+3. 在左侧选择步兵、载具、飞机、建筑、超级武器、武器、投射物或弹头，搜索中文名、英文名或代码，也可按所属国家筛选。左侧搜索还会列出匹配的全局参数，可用字段名或已提供的中文名称直接定位，例如 `RepairSell` 或「建筑自动维修」。单位的国家、装甲和建造前置可以搜索选择；弹头的基础装甲伤害修正和扩展装甲修正可以逐项编辑。
 4. 「全局配置」提供常规设置、战斗、电脑、难度、国家和阵营等规则段；可在段内搜索全部已定义字段，也可添加字段。「所有规则段」可浏览其他规则段，逗号分隔的值可按原顺序分项编辑。
 5. 「超级武器」读取 `[SuperWeaponTypes]` 中的注册项，支持修改充能、费用、效果与限制等参数；建筑和其他提供对象中的超级武器可通过选择器调整，关联关系可双向查看。未定义的参数显示为空，具体默认值和效果取决于武器类型及游戏引擎。
 6. 桌面版点击「保存」写回并备份；也可以点击「另存为」输出到其他目录。浏览器版通过「查看修改」逐个下载已修改的文件，再根据路径提示自行放置。
@@ -61,6 +61,8 @@ py -m http.server 4173 --bind 127.0.0.1
 已收录的规则字段显示为「中文名 / 规则字段名」，鼠标悬停可查看作用说明；未确认作用的字段保留原始代码，不推测含义。
 
 武器的 `Warhead` 是命中弹头，`IvanBomb.Warhead` 是附着炸弹爆炸时使用的弹头，两者可分别编辑和查看关联。命中弹头需要启用 `IvanBomb=yes`，炸弹效果才会生效；未单独设置或留空时，编辑器会根据已加载的 `[CombatDamage]IvanWarhead` 显示全局默认值及其来源，不会把默认值写入武器规则。具体规则参见 [Ares 炸弹文档](https://ares-developers.github.io/Ares-docs/new/weapons/ivanbombs.html)。
+
+投射物根据 `[Projectiles]` 列表和已识别武器的 `Projectile` 引用收集；空爆及弹片的子武器会继续解析。武器的投射物可直接输入或搜索选择，并可跳转到投射物属性、查看使用它的武器。修改共享投射物会影响使用它的武器；未加载或特殊逻辑中的引用可能没有列出。
 
 浏览器版导入的文件和修改保存在当前页面的内存中，刷新前请先导出需要保留的修改。有修改时浏览器会在离开页面前提示。桌面版从单个文件导入的项目可浏览和下载；直接保存需要先选择游戏目录。
 
@@ -77,7 +79,7 @@ py -m http.server 4173 --bind 127.0.0.1
 
 ## 开发验证
 
-字段对照表维护在 `src/field-metadata.js`，按单位、武器、弹头、超级武器、国家和全局规则段分组。每项依次填写 `[中文名, 作用说明, 可选搜索别名, 可选常显提示]`；同名字段按对象类型或规则段匹配。编号武器和炮塔、加特林阶段、连发间隔、各阵营逃生驾驶员、`Versus.<装甲>` 和带国家或飞机编号的空投字段由同一文件内的规则处理。字段含义主要依据原版 `rulesmd.ini` 注释以及 [Ares 文档](https://ares-developers.github.io/Ares-docs/)；不同版本对扩展字段的支持可能有差异。
+字段对照表维护在 `src/field-metadata.js`，按单位、武器、投射物、弹头、超级武器、国家和全局规则段分组。每项依次填写 `[中文名, 作用说明, 可选搜索别名, 可选常显提示]`；同名字段按对象类型或规则段匹配。编号武器和炮塔、加特林阶段、连发间隔、各阵营逃生驾驶员、`Versus.<装甲>` 和带国家或飞机编号的空投字段由同一文件内的规则处理。字段含义主要依据原版 `rulesmd.ini` 注释以及 [Ares 文档](https://ares-developers.github.io/Ares-docs/)；不同版本对扩展字段的支持可能有差异。
 
 ```sh
 npm test
@@ -85,4 +87,4 @@ npm test
 
 浏览器端的导入、编辑、关联与导出检查位于 `tests/browser-check.html`；长列表滚动、焦点及连续操作检查位于 `tests/scroll-check.html`；资源解析和图标显示检查位于 `tests/resource-check.html`；规则来源优先级检查位于 `tests/rules-source-check.html`；全局配置、结构化字段和固定高度检查位于 `tests/structured-check.html`；跨规则段搜索检查位于 `tests/global-search-check.html`；中文输入及超级武器检查位于 `tests/superweapon-ime-check.html`；字段中文名及说明检查位于 `tests/field-metadata-check.html`；驻军武器及其关联检查位于 `tests/garrison-weapons-check.html`；武器的直接命中与附着炸弹弹头检查位于 `tests/weapon-warheads-check.html`。启动本地服务器后可访问这些页面运行。
 
-`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转、浏览记录、上下文恢复、共享引用和未保存修改；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。
+`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。

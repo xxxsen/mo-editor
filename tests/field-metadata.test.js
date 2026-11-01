@@ -34,6 +34,16 @@ test('context resolves ambiguous and case-insensitive field names without guessi
   assert.equal(getFieldInfo('UnknownField', { type: 'vehicle' }).description, '');
 });
 
+test('projectile metadata distinguishes flight and collision settings from similarly named unit fields', () => {
+  assert.equal(getFieldInfo('image', { type: 'projectile' }).label, '投射物图像');
+  assert.equal(getFieldInfo('ROT', { type: 'projectile' }).label, '弹体转向速率');
+  assert.equal(getFieldInfo('ROT', { type: 'vehicle' }).label, '转向速度');
+  assert.match(getFieldInfo('SubjectToElevation', { type: 'projectile' }).description, /高度差.*射程/);
+  assert.match(getFieldInfo('SubjectToBuildings', { type: 'projectile' }).description, /实体建筑/);
+  assert.match(getFieldInfo('BallisticScatter.Min', { type: 'projectile' }).description, /Inaccurate=yes.*Arcing=yes/);
+  assert.equal(getFieldInfo('UnknownProjectileSetting', { type: 'projectile' }).known, false);
+});
+
 test('indexed weapon and armor definitions retain their specific meanings', () => {
   assert.equal(getFieldInfo('Weapon3', { type: 'vehicle' }).label, '第 3 武器');
   assert.equal(getFieldInfo('EliteWeapon12', { type: 'infantry' }).label, '精英第 12 武器');

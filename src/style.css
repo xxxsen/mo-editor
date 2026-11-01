@@ -57,3 +57,13 @@
 .usage-notice svg{color:#a4c78b;margin-top:1px}.usage-notice strong{color:#d0dfc9;font-weight:600}.usage-notice p{margin:3px 0 0}.usage-notice button{margin-left:auto;white-space:nowrap}
 .ref>div:nth-child(2){min-width:0}.ref-code{overflow-wrap:anywhere}
 @media(max-width:700px){.navigation-trail{padding:8px 17px}.topbar-context{width:100%}}
+.project-badge{max-width:min(42%,360px);min-width:0}
+.main-file-trigger{display:flex;align-items:center;gap:7px;min-width:0;max-width:240px;padding:2px 0;border:0;background:transparent;color:#d3e5ca;text-align:left;font:11px var(--mono)}
+.main-file-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.main-file-trigger svg{transform:rotate(90deg);color:#a7bea2}
+.main-file-trigger:hover{color:#e5f6d7}
+.main-file-list{max-height:min(45dvh,420px);overflow:auto;margin-top:14px;scrollbar-width:thin;scrollbar-color:#4b5e4c transparent}
+.main-file-list::-webkit-scrollbar{width:7px}.main-file-list::-webkit-scrollbar-thumb{background:#4b5e4c;border:2px solid #19231c;border-radius:6px}
+.main-file-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:11px 12px;border:1px solid transparent;border-radius:6px;background:transparent;color:#d0ddce;text-align:left;font:12px var(--mono)}
+.main-file-option span{min-width:0;overflow-wrap:anywhere}.main-file-option small{flex:none;color:#a9ce94;font:10px var(--mono)}
+.main-file-option:hover,.main-file-option.is-current{border-color:#4a6045;background:#253428}
+@media(max-width:700px){.project-badge{max-width:100%}.main-file-trigger{max-width:min(45vw,240px)}}

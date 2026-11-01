@@ -522,6 +522,56 @@ export const FIELD_METADATA = {
     'Abductor.ChangeOwner': ['绑架时改变所属方', '绑架目标时是否改变目标所属方。'],
     'Abductor.AbductBelowPercent': ['绑架生命值阈值', '目标生命值低于指定比例时才允许被绑架。'],
   },
+  // 原版投射物字段与 Ares 扩展；同名字段需按对象类型区分。
+  projectile: {
+    Image: ['投射物图像', '投射物飞行时使用的图像代码；none 表示不指定图像，实际显示还受 Inviso 和美术资源影响。'],
+    Inviso: ['投射物不可见', '投射物飞行时是否不可见；武器自身的激光、波形等视觉效果可能仍然显示。'],
+    AA: ['可攻击空中目标', '使用该投射物的武器是否可以瞄准空中目标；实际攻击还受武器及其他规则限制。'],
+    AG: ['可攻击地面目标', '使用该投射物的武器是否可以瞄准地面目标；实际攻击还受武器及其他规则限制。'],
+    AN: ['可攻击海军目标', '投射物对海军目标的瞄准设置；具体行为取决于游戏及扩展版本。'],
+    AS: ['可攻击潜艇目标', '投射物对潜艇目标的瞄准设置；具体行为取决于游戏及扩展版本。'],
+    ASW: ['反潜投射物', '投射物是否使用反潜相关逻辑；实际效果取决于游戏及扩展版本。'],
+    Arcing: ['抛物线飞行', '投射物是否采用抛物线飞行，而不是普通直线轨迹。'],
+    ROT: ['弹体转向速率', '投射物飞行时的转向速率；非零值与追踪逻辑有关，具体效果还取决于弹体类型。'],
+    Inaccurate: ['不精确弹道', '投射物是否使用不精确的命中或落点规则；散布距离还受其他参数控制。'],
+    Proximity: ['接近目标引爆', '投射物是否在接近目标时引爆，而不必等到直接命中。'],
+    Shadow: ['绘制弹体阴影', '高空投射物飞行时是否绘制阴影；实际效果与弹体类型有关。'],
+    High: ['高空投射物', '控制投射物的高空飞行相关表现；具体效果取决于弹体及引擎逻辑。'],
+    VeryHigh: ['超高空飞行', '投射物是否使用较高的巡航高度。'],
+    Level: ['保持飞行高度', '投射物是否在飞行时保持高度；原版中也与鱼雷逻辑有关。'],
+    Vertical: ['垂直投射物', '投射物是否使用垂直飞行相关逻辑。'],
+    Dropping: ['从高处下落', '投射物是否从起始高度向下坠落。'],
+    Acceleration: ['弹体加速度', '导弹等投射物飞行时使用的加速度；实际速度还与武器和弹体类型有关。'],
+    Arm: ['引信延迟', '投射物的引信延迟参数；具体引爆时机还取决于弹体类型。'],
+    CourseLockDuration: ['初始航向锁定时间', '投射物发射后保持初始航向锁定的帧数。'],
+    DetonationAltitude: ['引爆高度', '投射物引爆高度相关的配置；具体表现取决于弹体和游戏引擎。'],
+    SubjectToCliffs: ['受上坡悬崖阻挡', '是否受向上的悬崖阻挡；原版规则对追踪弹体有特殊限制。'],
+    SubjectToElevation: ['受高差射程修正', '是否参与地形高度差带来的射程修正；原版规则对追踪弹体有特殊限制。'],
+    SubjectToWalls: ['受围墙阻挡', '投射物是否可能被围墙阻挡。'],
+    SubjectToBuildings: ['受实体建筑阻挡', '是否参与 Ares 实体建筑阻挡判定；建筑自身也需要配置实体高度。'],
+    SubjectToTrenches: ['受战壕穿透规则影响', '控制投射物是否使用目标建筑通常的 UC.PassThrough 判定；需配合 Ares 战壕逻辑。'],
+    IgnoresFirestorm: ['无视火风暴墙', '投射物是否忽略火风暴墙相关阻挡；需配合对应扩展逻辑。'],
+    Ranged: ['飞行距离有限', '投射物是否会耗尽飞行距离并引爆；距离由武器的 ProjectileRange 等规则决定。'],
+    Airburst: ['空中散射', '是否使用空爆或空中散射逻辑；效果与 AirburstWeapon、Cluster 及扩展规则有关。'],
+    Splits: ['投射物分裂', '是否按 Cluster 和 AirburstWeapon 配置分裂为子投射物；需要相应扩展逻辑。'],
+    AirburstWeapon: ['空爆子武器', '空爆或分裂时使用的子武器规则段 ID；子武器自身继续指定投射物和弹头。'],
+    Cluster: ['子弹体数量', '空爆或分裂等逻辑使用的子弹体数量；实际效果取决于投射物及引擎逻辑。'],
+    AirburstSpread: ['空爆散布范围', '空爆子武器覆盖的范围，单位通常为格；需要 Airburst=yes，不能与 Splits=yes 组合使用。'],
+    AroundTarget: ['围绕原目标散射', '空爆或分裂时是否围绕原目标寻找子弹体目标；需配合相应扩展逻辑。'],
+    RetargetAccuracy: ['分裂保持目标概率', '分裂的子弹体继续瞄准原目标的概率；取值及效果受扩展规则限制。'],
+    RetargetSelf: ['分裂可重新瞄准发射者', '分裂后重新选取目标时是否允许选择发射者；需配合 Splits 逻辑。'],
+    ShrapnelWeapon: ['弹片武器', '投射物触发弹片逻辑时使用的子武器规则段 ID。'],
+    ShrapnelCount: ['弹片数量', '弹片逻辑使用的数量参数；具体取值效果还受游戏引擎影响。'],
+    'BallisticScatter.Min': ['最小弹道散布', '单个投射物的最小弹道散布距离；Ares 中需同时启用 Inaccurate=yes 和 Arcing=yes。'],
+    'BallisticScatter.Max': ['最大弹道散布', '单个投射物的最大弹道散布距离；Ares 中需同时启用 Inaccurate=yes 和 Arcing=yes。'],
+    FlakScatter: ['防空炮散布', '是否使用防空炮式弹道散布；实际散布还受不精确弹道和引擎规则影响。'],
+    AttachedSystem: ['附着粒子系统', '投射物飞行时附着的粒子系统 ID；Ares 的此功能支持烟雾类粒子系统。'],
+    FirersPalette: ['使用发射者调色板', '投射物绘制时是否使用发射者的调色板和所属方颜色。'],
+    Scalable: ['允许动画缩放', '是否允许投射物动画使用动态缩放相关逻辑。'],
+    Rotates: ['旋转图像', '控制投射物图像是否按朝向旋转；具体帧组织取决于美术配置及引擎。'],
+    AnimLength: ['每个朝向动画帧数', '旋转投射物每个朝向的动画帧数；需要对应的 Ares 旋转动画支持。'],
+    AnimRate: ['弹体动画速度', '投射物动画的帧间隔；Ares 旋转动画中不能设为 0。'],
+  },
   warhead: {
     Verses: ['基础装甲伤害倍率', '依次设置对 11 类基础装甲的伤害倍率；特殊的 0%、1%、2% 还可能影响选敌与反击。'],
     CellSpread: ['伤害范围', '弹头的范围伤害半径，通常以地图格为单位。'],
@@ -1213,7 +1263,7 @@ export function getFieldInfo(fieldName, { type = '', section = '', globalKind = 
         definition = [`阵营 ${Number(match[1])} 逃生驾驶员`, `载具或飞机属于阵营索引 ${Number(match[1])} 时，可生成的逃生驾驶员步兵类型 ID；阵营索引从 0 开始。`];
       }
     }
-  } else if (type === 'weapon' || type === 'warhead' || type === 'superweapon') {
+  } else if (type === 'weapon' || type === 'projectile' || type === 'warhead' || type === 'superweapon') {
     definition = tables[type].get(name) || (type === 'warhead' && !technoOnlyEffects.has(name) ? tables.attachEffect.get(name) : null) || tables.common.get(name);
     if (!definition && type === 'warhead') {
       const match = fieldName.match(/^Versus\.([^.]+)(?:\.(ForceFire|Retaliate|PassiveAcquire))?$/i);
