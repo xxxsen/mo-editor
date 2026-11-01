@@ -61,6 +61,24 @@ pub struct VersionInfo {
     pub paths: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotInfo {
+    pub hash: String,
+    pub size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionFileInfo {
+    pub path: String,
+    pub before: Option<SnapshotInfo>,
+    pub after: Option<SnapshotInfo>,
+    pub after_error: Option<String>,
+    pub current_hash: Option<String>,
+    pub current_error: Option<String>,
+}
+
 pub struct GameStore {
     pub root: PathBuf,
     versions: PathBuf,
@@ -531,13 +549,104 @@ impl GameStore {
         Ok(versions)
     }
 
-    pub fn restore(&self, id: &str, expected: Vec<ExpectedFile>) -> Result<String> {
-        let old = self.load(id)?;
-        if old.status != "complete" {
-            return Err("该版本不能恢复".into());
+    fn complete_version(&self, id: &str) -> Result<Manifest> {
+        let manifest = self.load(id)?;
+        if manifest.status != "complete" {
+            return Err("该版本不能查看或恢复".into());
         }
-        if expected.len() != old.items.len() {
+        Ok(manifest)
+    }
+
+    fn snapshot_info(
+        &self,
+        id: &str,
+        index: usize,
+        side: &str,
+        hash: &Option<String>,
+    ) -> Option<SnapshotInfo> {
+        hash.as_ref().map(|value| {
+            let path = self.versions.join(id).join(format!("{side}-{index}"));
+            let size = fs::metadata(path)
+                .ok()
+                .filter(|meta| meta.is_file() && meta.len() <= MAX_RULE_BYTES)
+                .map(|meta| meta.len());
+            SnapshotInfo {
+                hash: value.clone(),
+                size,
+            }
+        })
+    }
+
+    pub fn version_files(&self, id: &str) -> Result<Vec<VersionFileInfo>> {
+        let manifest = self.complete_version(id)?;
+        Ok(manifest
+            .items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let (current_hash, current_error) = match self.current(&item.path) {
+                    Ok(bytes) => (bytes.as_deref().map(digest), None),
+                    Err(error) => (None, Some(error)),
+                };
+                VersionFileInfo {
+                    path: item.path.clone(),
+                    before: self.snapshot_info(id, index, "before", &item.before_hash),
+                    after: self.snapshot_info(id, index, "after", &item.after_hash),
+                    after_error: if !item.delete && item.after_hash.is_none() {
+                        Some("缺少操作后快照记录".into())
+                    } else {
+                        None
+                    },
+                    current_hash,
+                    current_error,
+                }
+            })
+            .collect())
+    }
+
+    pub fn version_snapshot(&self, id: &str, index: usize, side: &str) -> Result<Vec<u8>> {
+        let manifest = self.complete_version(id)?;
+        let item = manifest.items.get(index).ok_or("无效的历史文件序号")?;
+        let expected = match side {
+            "before" => &item.before_hash,
+            "after" => &item.after_hash,
+            _ => return Err("无效的历史文件状态".into()),
+        }
+        .as_ref()
+        .ok_or("该文件在此状态下不存在")?;
+        let path = self.versions.join(id).join(format!("{side}-{index}"));
+        let metadata = fs::metadata(&path).map_err(|e| err("无法读取历史快照", e))?;
+        if !metadata.is_file() || metadata.len() > MAX_RULE_BYTES {
+            return Err("历史快照不是普通文件或文件过大".into());
+        }
+        let bytes = fs::read(path).map_err(|e| err("无法读取历史快照", e))?;
+        if bytes.len() as u64 > MAX_RULE_BYTES {
+            return Err("历史快照过大".into());
+        }
+        if &digest(&bytes) != expected {
+            return Err("历史快照校验失败".into());
+        }
+        Ok(bytes)
+    }
+
+    pub fn restore(
+        &self,
+        id: &str,
+        expected: Vec<ExpectedFile>,
+        targets: Vec<ExpectedFile>,
+    ) -> Result<String> {
+        let old = self.complete_version(id)?;
+        if expected.len() != old.items.len() || targets.len() != old.items.len() {
             return Err("恢复文件列表不匹配".into());
+        }
+        for list in [&expected, &targets] {
+            let mut seen = HashSet::new();
+            if list
+                .iter()
+                .any(|item| !seen.insert(item.path.to_lowercase()))
+            {
+                return Err("恢复文件列表包含重复路径".into());
+            }
         }
         let mut entries = Vec::new();
         for item in &old.items {
@@ -545,6 +654,13 @@ impl GameStore {
                 .iter()
                 .find(|value| value.path == item.path)
                 .ok_or("恢复文件列表不匹配")?;
+            let target = targets
+                .iter()
+                .find(|value| value.path == item.path)
+                .ok_or("恢复文件列表不匹配")?;
+            if target.expected_hash != item.before_hash {
+                return Err("历史版本在预览后发生变化，请重新查看恢复差异。".into());
+            }
             entries.push(SaveEntry {
                 path: item.path.clone(),
                 expected_hash: entry.expected_hash.clone(),
@@ -591,6 +707,17 @@ mod tests {
             expected_hash: bytes.map(digest),
             delete: false,
         }
+    }
+    fn targets(store: &GameStore, id: &str) -> Vec<ExpectedFile> {
+        store
+            .version_files(id)
+            .unwrap()
+            .into_iter()
+            .map(|item| ExpectedFile {
+                path: item.path,
+                expected_hash: item.before.map(|snapshot| snapshot.hash),
+            })
+            .collect()
     }
 
     #[test]
@@ -639,6 +766,7 @@ mod tests {
                         expected_hash: Some(digest(b"created")),
                     },
                 ],
+                targets(&store, &tx),
             )
             .unwrap();
         assert_eq!(
@@ -651,6 +779,13 @@ mod tests {
         );
         assert!(!root.join("new.ini").exists());
         assert_eq!(store.versions().unwrap().len(), 2);
+        let restored_files = store.version_files(&restore).unwrap();
+        assert_eq!(
+            restored_files[2].before.as_ref().unwrap().hash,
+            digest(b"created")
+        );
+        assert!(restored_files[2].after.is_none());
+        assert!(restored_files[2].after_error.is_none());
         // Restoring the restore point puts the edited version back.
         store
             .restore(
@@ -669,9 +804,111 @@ mod tests {
                         expected_hash: None,
                     },
                 ],
+                targets(&store, &restore),
             )
             .unwrap();
         assert_eq!(fs::read(root.join("new.ini")).unwrap(), b"created");
+    }
+
+    #[test]
+    fn history_exposes_verified_before_after_and_created_files() {
+        let (_temp, root, data) = setup();
+        fs::write(root.join("rulesmo.ini"), b"before").unwrap();
+        let store = GameStore::open(&root, &data).unwrap();
+        let tx = store
+            .prepare(
+                vec![
+                    expected("rulesmo.ini", Some(b"before")),
+                    expected("new.ini", None),
+                ],
+                "save",
+            )
+            .unwrap();
+        store.stage(&tx, 0, b"after").unwrap();
+        store.stage(&tx, 1, b"created").unwrap();
+        store.commit(&tx).unwrap();
+        let files = store.version_files(&tx).unwrap();
+        assert_eq!(files[0].before.as_ref().unwrap().hash, digest(b"before"));
+        assert_eq!(files[0].before.as_ref().unwrap().size, Some(6));
+        assert_eq!(files[0].after.as_ref().unwrap().hash, digest(b"after"));
+        assert_eq!(files[0].current_hash, Some(digest(b"after")));
+        assert!(files[1].before.is_none());
+        assert_eq!(store.version_snapshot(&tx, 0, "before").unwrap(), b"before");
+        assert_eq!(store.version_snapshot(&tx, 0, "after").unwrap(), b"after");
+        assert_eq!(store.version_snapshot(&tx, 1, "after").unwrap(), b"created");
+        assert!(store.version_snapshot(&tx, 1, "before").is_err());
+        assert!(store.version_snapshot(&tx, 0, "../../outside").is_err());
+        assert!(store.version_snapshot(&tx, 3, "after").is_err());
+        assert!(store.version_files("../outside").is_err());
+        let mut manifest = store.load(&tx).unwrap();
+        manifest.items[0].after_hash = None;
+        store.persist(&manifest).unwrap();
+        assert!(store.version_files(&tx).unwrap()[0].after_error.is_some());
+        manifest.items[0].after_hash = Some(digest(b"after"));
+        store.persist(&manifest).unwrap();
+        fs::remove_file(store.versions.join(&tx).join("after-0")).unwrap();
+        assert_eq!(
+            store.version_files(&tx).unwrap()[0]
+                .after
+                .as_ref()
+                .unwrap()
+                .size,
+            None
+        );
+        assert!(store.version_snapshot(&tx, 0, "after").is_err());
+        assert_eq!(store.version_snapshot(&tx, 0, "before").unwrap(), b"before");
+        let current = vec![
+            ExpectedFile {
+                path: "rulesmo.ini".into(),
+                expected_hash: Some(digest(b"after")),
+            },
+            ExpectedFile {
+                path: "new.ini".into(),
+                expected_hash: Some(digest(b"created")),
+            },
+        ];
+        store.restore(&tx, current, targets(&store, &tx)).unwrap();
+        assert_eq!(fs::read(root.join("rulesmo.ini")).unwrap(), b"before");
+        assert!(!root.join("new.ini").exists());
+    }
+
+    #[test]
+    fn restore_rejects_stale_preview_targets_and_corrupted_backups() {
+        let (_temp, root, data) = setup();
+        fs::write(root.join("rulesmo.ini"), b"before").unwrap();
+        let store = GameStore::open(&root, &data).unwrap();
+        let tx = store
+            .prepare(vec![expected("rulesmo.ini", Some(b"before"))], "save")
+            .unwrap();
+        store.stage(&tx, 0, b"after").unwrap();
+        store.commit(&tx).unwrap();
+        let current = vec![ExpectedFile {
+            path: "rulesmo.ini".into(),
+            expected_hash: Some(digest(b"after")),
+        }];
+        let mut wrong_targets = targets(&store, &tx);
+        wrong_targets[0].expected_hash = Some(digest(b"different"));
+        assert!(store
+            .restore(&tx, current.clone(), wrong_targets)
+            .unwrap_err()
+            .contains("重新查看"));
+        fs::write(root.join("rulesmo.ini"), b"external").unwrap();
+        assert!(store
+            .restore(&tx, current.clone(), targets(&store, &tx))
+            .unwrap_err()
+            .contains("外部"));
+        assert_eq!(fs::read(root.join("rulesmo.ini")).unwrap(), b"external");
+        fs::write(root.join("rulesmo.ini"), b"after").unwrap();
+        fs::write(store.versions.join(&tx).join("before-0"), b"corrupted").unwrap();
+        assert!(store
+            .version_snapshot(&tx, 0, "before")
+            .unwrap_err()
+            .contains("校验"));
+        assert!(store
+            .restore(&tx, current, targets(&store, &tx))
+            .unwrap_err()
+            .contains("校验"));
+        assert_eq!(fs::read(root.join("rulesmo.ini")).unwrap(), b"after");
     }
 
     #[test]

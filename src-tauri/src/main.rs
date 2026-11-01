@@ -11,7 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use store::{ExpectedFile, GameStore, SaveEntry, VersionInfo};
+use store::{ExpectedFile, GameStore, SaveEntry, VersionFileInfo, VersionInfo};
 use tauri::{
     ipc::{InvokeBody, Request, Response},
     Manager, State,
@@ -324,13 +324,36 @@ fn list_versions(session_id: String, state: State<'_, Runtime>) -> Result<Vec<Ve
 }
 
 #[tauri::command(async)]
+fn version_files(
+    session_id: String,
+    version: String,
+    state: State<'_, Runtime>,
+) -> Result<Vec<VersionFileInfo>> {
+    session(&state, &session_id)?.version_files(&version)
+}
+
+#[tauri::command(async)]
+fn read_version_snapshot(
+    session_id: String,
+    version: String,
+    index: usize,
+    side: String,
+    state: State<'_, Runtime>,
+) -> Result<Response> {
+    Ok(Response::new(
+        session(&state, &session_id)?.version_snapshot(&version, index, &side)?,
+    ))
+}
+
+#[tauri::command(async)]
 fn restore_version(
     session_id: String,
     version: String,
     expected: Vec<ExpectedFile>,
+    targets: Vec<ExpectedFile>,
     state: State<'_, Runtime>,
 ) -> Result<String> {
-    session(&state, &session_id)?.restore(&version, expected)
+    session(&state, &session_id)?.restore(&version, expected, targets)
 }
 
 fn main() {
@@ -357,6 +380,8 @@ fn main() {
             commit_save,
             abort_save,
             list_versions,
+            version_files,
+            read_version_snapshot,
             restore_version
         ])
         .run(tauri::generate_context!())

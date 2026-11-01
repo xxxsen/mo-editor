@@ -10,7 +10,9 @@
 
 启动时窗口会按首个对象的内容调整高度，最大不超过所在屏幕的可用高度；屏幕空间不足时详情区域仍可滚动。用户手动调整窗口后，程序不会再自动改变窗口尺寸。
 
-「历史版本」列出每次保存或恢复前涉及的文件，恢复时只还原记录中列出的文件，并再次备份当前文件。「另存为」可将当前主规则及已加载的 include 文件按相对路径输出到另一个目录，原项目的未保存修改会继续保留。
+「历史版本」列出每次保存或恢复涉及的文件。可查看该次操作前后的差异，也可预览从当前已保存文件恢复到该次操作前的差异；切换文件可逐个检查。确认恢复后只还原记录中列出的文件，并再次备份当前文件。恢复会重新加载目录并丢弃所有未保存草稿；若磁盘文件或历史目标在预览后发生变化，恢复会停止。历史记录包含完整的操作前后文件，旧记录也可以查看；如果某一侧的快照缺失或损坏，界面会说明。新增或删除的独立 INI 按文件创建或删除展示，不会把 MIX 中的内容假定为历史快照。
+
+历史差异支持 UTF-8、GBK、UTF-16 及换行变化，变更行按页展示；单文件超过 16 MB、行数过多或无法完整解码时，可下载对应文件后比较。两边文本相同但字节不同（例如 BOM）会单独提示。「另存为」可将当前主规则及已加载的 include 文件按相对路径输出到另一个目录，原项目的未保存修改会继续保留。
 
 备份位于 `%LOCALAPPDATA%\local.mentalomega.ruleseditor\backups`，每个游戏目录独立保存。首次从 MIX 读取的规则会保存为目录中的独立 INI，不会修改 MIX；恢复到原先没有独立文件的状态时会移除该次生成的文件。未解析的 include、循环引用及不支持的继承会阻止直接保存，先解决加载提示后再保存。
 
@@ -124,6 +126,6 @@ npm test
 
 浏览器端的导入、编辑、关联与导出检查位于 `tests/browser-check.html`；长列表滚动、焦点及连续操作检查位于 `tests/scroll-check.html`；资源解析和图标显示检查位于 `tests/resource-check.html`；规则来源优先级检查位于 `tests/rules-source-check.html`；全局配置、结构化字段和固定高度检查位于 `tests/structured-check.html`；跨规则段搜索检查位于 `tests/global-search-check.html`；中文输入及超级武器检查位于 `tests/superweapon-ime-check.html`；字段中文名及说明检查位于 `tests/field-metadata-check.html`；驻军武器及其关联检查位于 `tests/garrison-weapons-check.html`；武器的直接命中与附着炸弹弹头检查位于 `tests/weapon-warheads-check.html`。启动本地服务器后可访问这些页面运行。
 
-`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html`、`tests/object-creation-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑、对象新增和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。
+`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、历史差异、恢复预览、冲突、恢复、另存为和 MIX include；`tests/history-diff.test.js` 检查编码、换行、文件创建和删除及大量修改；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html`、`tests/object-creation-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑、对象新增和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份校验和中断恢复。
 
 `tests/all-objects-search-check.html` 检查全部对象的跨类型搜索、所属方筛选、结果跳转与修改导出。

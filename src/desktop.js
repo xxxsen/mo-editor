@@ -32,7 +32,11 @@ export async function recentDirectory() { return invoke('open_recent_directory')
 export async function rememberDirectory(sessionId) { return invoke('remember_directory', { sessionId }); }
 export async function refreshDirectory(sessionId) { return invoke('refresh_game_files', { sessionId }); }
 export async function listVersions(sessionId) { return invoke('list_versions', { sessionId }); }
-export async function restoreVersion(sessionId, version, expected) { return invoke('restore_version', { sessionId, version, expected }); }
+export async function versionFiles(sessionId, version) { return invoke('version_files', { sessionId, version }); }
+export async function versionSnapshot(sessionId, version, index, side) {
+  return new Uint8Array(await invoke('read_version_snapshot', { sessionId, version, index, side }));
+}
+export async function restoreVersion(sessionId, version, expected, targets) { return invoke('restore_version', { sessionId, version, expected, targets }); }
 export async function prepareExportDirectories(sessionId, paths) { return invoke('prepare_export_directories', { sessionId, paths }); }
 
 export async function saveFiles(sessionId, files) {

@@ -3,6 +3,7 @@
 <script type="module">
 import { hashMixFilename } from '../src/resources.js';
 const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytes = text => encoder.encode(text);
 const check = (condition, message) => { if (!condition) throw new Error(message); };
@@ -43,12 +44,15 @@ const healing = new Map([
   ['rulesmo.ini', bytes('[General]\nSelfHealInfantryFrames=100 ; global\nSelfHealInfantryAmount=20\n[BuildingTypes]\n0=HOSP\n[#include]\n0=healing.ini\n')],
   ['healing.ini', bytes('[HOSP]\nName=Hospital Building\nInfantryGainSelfHeal=1 ; building\n')],
 ]);
-const disks = { loose, packed, output, missing, reset, fire, healing };
-const versions = { loose: [], packed: [], output: [], missing: [], reset: [], fire: [], healing: [] }, transactions = new Map();
+const historyBefore = bytes('[VehicleTypes]\n0=HIST\n[HIST]\nName=History Tank\nCost=100\n');
+const historyAfter = bytes(`[VehicleTypes]\n0=HIST\n[HIST]\nName=History Tank\nCost=200\nDanger=<img src=x onerror=alert(1)>\nLong=${'x'.repeat(2500)}\n${Array.from({ length: 250 }, (_, i) => `Extra${i}=yes\n`).join('')}`);
+const history = new Map([['rulesmo.ini', historyAfter]]);
+const disks = { loose, packed, output, missing, reset, fire, healing, history };
+const versions = { loose: [], packed: [], output: [], missing: [], reset: [], fire: [], healing: [], history: [{ id: 'abcdef-1', createdMs: Date.now(), kind: 'save', paths: ['rulesmo.ini'], before: [{ path: 'rulesmo.ini', data: historyBefore }], after: [{ path: 'rulesmo.ini', data: historyAfter }] }] }, transactions = new Map();
 let current = 'loose', nextTransaction = 0, remembered = '';
 const describe = id => ({ sessionId: id, directory: `D:\\${id}`, files: [...disks[id]].map(([path, data]) => ({ path, name: path.split('/').at(-1), size: data.byteLength })) });
 const snapshot = (disk, entries) => entries.map(entry => ({ path: entry.path, data: disk.has(entry.path) ? disk.get(entry.path).slice() : null }));
-const addVersion = (id, before, kind) => { const entry = { id: `v${++nextTransaction}`, createdMs: Date.now() + nextTransaction, kind, paths: before.map(item => item.path), before }; versions[id].unshift(entry); return entry; };
+const addVersion = (id, before, kind) => { const entry = { id: `v${++nextTransaction}`, createdMs: Date.now() + nextTransaction, kind, paths: before.map(item => item.path), before, after: snapshot(disks[id], before) }; versions[id].unshift(entry); return entry; };
 window.mockInvoke = async (command, payload, options) => {
   if (command === 'open_recent_directory') return null;
   if (command === 'pick_game_directory') return describe(current);
@@ -78,9 +82,24 @@ window.mockInvoke = async (command, payload, options) => {
     tx.entries.forEach((entry, index) => disk.set(entry.path, tx.staged[index])); addVersion(tx.sessionId, tx.before, 'save'); return;
   }
   if (command === 'list_versions') return versions[payload.sessionId];
+  if (command === 'version_files') {
+    const version = versions[payload.sessionId].find(item => item.id === payload.version), disk = disks[payload.sessionId];
+    return Promise.all(version.before.map(async (item, index) => ({
+      path: item.path,
+      before: item.data === null ? null : { hash: await hash(item.data), size: item.data.length },
+      after: version.after[index].data === null ? null : { hash: await hash(version.after[index].data), size: version.missingAfter ? null : version.after[index].data.length },
+      afterError: null, currentHash: await hash(disk.get(item.path)), currentError: null,
+    })));
+  }
+  if (command === 'read_version_snapshot') {
+    const version = versions[payload.sessionId].find(item => item.id === payload.version), data = version[payload.side][payload.index].data;
+    if (data === null || (payload.side === 'after' && version.missingAfter)) throw new Error('文件不存在');
+    return data.slice().buffer;
+  }
   if (command === 'restore_version') {
     const disk = disks[payload.sessionId], version = versions[payload.sessionId].find(item => item.id === payload.version);
     for (const entry of payload.expected) if (await hash(disk.get(entry.path)) !== entry.expectedHash) throw new Error(`外部修改 ${entry.path} actual=${await hash(disk.get(entry.path))} expected=${entry.expectedHash}`);
+    for (const entry of payload.targets) if (await hash(version.before.find(item => item.path === entry.path)?.data) !== entry.expectedHash) throw new Error('历史目标已变化');
     const before = snapshot(disk, payload.expected);
     for (const item of version.before) { if (item.data) disk.set(item.path, item.data.slice()); else disk.delete(item.path); }
     return addVersion(payload.sessionId, before, 'restore').id;
@@ -90,6 +109,12 @@ window.mockInvoke = async (command, payload, options) => {
 frame.addEventListener('load', async () => {
  try {
   const w = frame.contentWindow, d = frame.contentDocument; w.confirm = () => true;
+  async function previewRestore() {
+    await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-history-open="0"][data-mode="restore"]'), 'history was not displayed');
+    d.querySelector('[data-history-open="0"][data-mode="restore"]').click();
+    await waitFor(() => d.querySelector('[data-history-confirm]') && !d.querySelector('[data-history-confirm]').disabled, 'restore preview was not ready');
+  }
+  async function restoreFirst() { await previewRestore(); d.querySelector('[data-history-confirm]').click(); }
   await waitFor(() => !d.querySelector('#app').inert && d.querySelector('[data-action="folder"]'), 'desktop did not finish starting');
   d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Desktop Tank', 'desktop folder did not open');
@@ -108,9 +133,39 @@ frame.addEventListener('load', async () => {
   loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=150 ; keep\nStrength=300\n'));
   d.querySelector('[data-action="save"]').click();
   await waitFor(() => decoder.decode(loose.get('include/units.ini')).includes('Cost=180 ; keep') && !d.querySelector('#app').inert, 'second save failed');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '190'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=170 ; external\n'));
   d.querySelector('[data-action="history"]').click();
-  await waitFor(() => d.querySelector('[data-restore="0"]'), 'history was not displayed');
-  d.querySelector('[data-restore="0"]').click();
+  await waitFor(() => d.querySelector('[data-history-open="0"][data-mode="restore"]'), 'history missing for conflict check');
+  d.querySelector('[data-history-open="0"][data-mode="restore"]').click();
+  await waitFor(() => d.querySelector('[data-history-confirm]') && d.querySelector('#changes-dialog').textContent.includes('磁盘文件已变化'), 'external conflict was not reported in preview');
+  check(d.querySelector('[data-history-confirm]').disabled && d.querySelector('#changes-dialog').textContent.includes('未保存修改'), 'conflicting restore was not blocked or unsaved edits were not reported');
+  d.querySelector('#changes-dialog [data-close]').click();
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=180 ; keep\nStrength=300\n'));
+  d.querySelector('[data-action="history"]').click();
+  await waitFor(() => d.querySelector('[data-history-open="0"][data-mode="changes"]'), 'history was not displayed');
+  d.querySelector('[data-history-open="0"][data-mode="changes"]').click();
+  await waitFor(() => d.querySelector('[data-history-diff]')?.textContent.includes('Cost=180'), 'historical diff did not load');
+  check(d.querySelector('[data-history-diff]').textContent.includes('Cost=150') && !d.querySelector('[data-history-confirm]'), 'historical diff or preview requirement missing');
+  d.querySelector('[data-history-list]').click(); d.querySelector('[data-history-open="1"][data-mode="changes"]').click();
+  await waitFor(() => d.querySelector('[data-history-diff]')?.textContent.includes('Cost=150'), 'older historical diff did not load');
+  check(d.querySelector('[data-history-diff]').textContent.includes('Cost=100') && !d.querySelector('[data-history-diff]').textContent.includes('Cost=180'), 'old history incorrectly used the current file');
+  d.querySelector('[data-history-mode="restore"]').click();
+  await waitFor(() => d.querySelector('[data-history-confirm]') && !d.querySelector('[data-history-confirm]').disabled, 'old restore preview was not ready');
+  check(d.querySelector('[data-history-diff]').textContent.includes('Cost=180') && d.querySelector('[data-history-diff]').textContent.includes('Cost=100'), 'old restore preview omitted later changes');
+  d.querySelector('[data-history-list]').click(); d.querySelector('[data-history-open="0"][data-mode="changes"]').click();
+  await waitFor(() => d.querySelector('[data-history-diff]')?.textContent.includes('Cost=180'), 'latest historical diff did not reopen');
+  d.querySelector('[data-history-mode="restore"]').click();
+  await waitFor(() => d.querySelector('[data-history-confirm]') && !d.querySelector('[data-history-confirm]').disabled, 'restore preview was not ready');
+  check(d.querySelector('[data-history-diff]').textContent.includes('Cost=180') && d.querySelector('[data-history-diff]').textContent.includes('Cost=150') && d.querySelector('#changes-dialog').textContent.includes('未保存修改'), 'restore preview did not compare current and target or warn about draft');
+  w.confirm = () => false; d.querySelector('[data-history-confirm]').click();
+  check(d.querySelector('#changes-dialog').open && decoder.decode(loose.get('include/units.ini')).includes('Cost=180') && d.querySelector('[data-field="Cost"]').value === '190', 'canceling restore changed files or discarded draft');
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=175 ; external after preview\n'));
+  w.confirm = () => true; d.querySelector('[data-history-confirm]').click();
+  await waitFor(() => d.querySelector('#toast').textContent.includes('恢复失败') && !d.querySelector('#app').inert, 'changed file after preview was not rejected');
+  check(decoder.decode(loose.get('include/units.ini')).includes('Cost=175') && d.querySelector('[data-field="Cost"]').value === '190', 'stale restore overwrote the external file or draft');
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=180 ; keep\nStrength=300\n'));
+  d.querySelector('[data-action="history"]').click(); await restoreFirst();
   await waitFor(() => d.querySelector('[data-field="Cost"]')?.value === '150' && !d.querySelector('#app').inert, 'restore did not reload the original value');
   check(versions.loose.length === 3, 'restoring did not back up the current file');
   cost = d.querySelector('[data-field="Cost"]'); cost.value = '160'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
@@ -140,8 +195,9 @@ frame.addEventListener('load', async () => {
   await waitFor(() => packed.has('rulesmo.ini') && packed.has('units.ini') && !d.querySelector('#app').inert, 'MIX save did not create loose rules');
   check(decoder.decode(packed.get('units.ini')).includes('Cost=230 ; packed') && decoder.decode(packed.get('units.ini')).includes('Inviso=no ; projectile'), 'MIX include or projectile edit not written');
   check(decoder.decode(packed.get('rulesmo.ini')).includes('1=PACKED_NEW') && decoder.decode(packed.get('units.ini')).includes('[PACKED_NEW]') && decoder.decode(packed.get('units.ini')).includes('Image=PACKED'), 'MIX clone or registration not written');
-  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('#changes-dialog').textContent.includes('rulesmo.ini') && d.querySelector('[data-restore="0"]'), 'MIX history missing');
-  d.querySelector('[data-restore="0"]').click();
+  d.querySelector('[data-action="history"]').click(); await previewRestore();
+  check(d.querySelector('#changes-dialog').textContent.includes('删除文件'), 'MIX restore did not identify newly created files for deletion');
+  d.querySelector('[data-history-confirm]').click();
   try {
     await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && d.querySelector('[data-field="Cost"]')?.value === '200' && !d.querySelector('#app').inert, 'restoring MIX source did not remove generated files');
   } catch (error) {
@@ -162,8 +218,7 @@ frame.addEventListener('load', async () => {
   await waitFor(() => packed.has('units.ini') && decoder.decode(packed.get('units.ini')).includes('EliteAbilities=EMPIMMUNE') && !d.querySelector('#app').inert, 'desktop ability selection did not save');
   check(!decoder.decode(packed.get('units.ini')).includes('Sensors='), 'unfilled field was written during desktop save');
   for (const item of ['Passengers=5', 'SizeLimit=2', 'PipScale=Passengers', 'OpenTopped=yes', 'Cost=200 ; packed']) check(decoder.decode(packed.get('units.ini')).includes(item), `MIX quick feature save missing ${item}`);
-  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'ability save backup missing');
-  d.querySelector('[data-restore="0"]').click();
+  d.querySelector('[data-action="history"]').click(); await restoreFirst();
   await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && !d.querySelector('#app').inert, 'restoring ability save did not restore MIX source');
   current = 'reset'; d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Reset Tank', 'default reset fixture did not open');
@@ -175,8 +230,7 @@ frame.addEventListener('load', async () => {
   editor.querySelector('[data-quick-apply]').click(); d.querySelector('[data-action="save"]').click();
   await waitFor(() => !decoder.decode(reset.get('rulesmo.ini')).includes('ImmuneToEMP=') && !decoder.decode(reset.get('extra.ini')).includes('ImmuneToEMP=') && !d.querySelector('#app').inert, 'default reset did not save both files');
   check(versions.reset[0].paths.length === 2, 'default reset did not back up both files');
-  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'default reset backup missing');
-  d.querySelector('[data-restore="0"]').click();
+  d.querySelector('[data-action="history"]').click(); await restoreFirst();
   await waitFor(() => decoder.decode(reset.get('rulesmo.ini')).includes('ImmuneToEMP=no ; first') && decoder.decode(reset.get('extra.ini')).includes('ImmuneToEMP=yes ; last') && !d.querySelector('#app').inert, 'default reset restore did not restore both files');
   current = 'fire'; d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Fire Infantry', 'passenger-fire fixture did not open');
@@ -189,8 +243,7 @@ frame.addEventListener('load', async () => {
   check(decoder.decode(fire.get('units.ini')).includes('Primary=Gun_OT') && decoder.decode(fire.get('units.ini')).includes('FireInTransport=yes ; preserve'), 'passenger weapon clone lost its reference or modified value');
   check(decoder.decode(fire.get('units.ini')).includes('[OTHER]\nName=Other Tank\nPrimary=Gun') && decoder.decode(fire.get('units.ini')).includes('FireInTransport=no ; preserve'), 'passenger weapon clone modified the original');
   check(versions.fire[0].paths.length === 2, 'passenger weapon clone did not back up both files');
-  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'passenger copy backup missing');
-  d.querySelector('[data-restore="0"]').click();
+  d.querySelector('[data-action="history"]').click(); await restoreFirst();
   await waitFor(() => !decoder.decode(fire.get('rulesmo.ini')).includes('Gun_OT') && !decoder.decode(fire.get('units.ini')).includes('Gun_OT') && !d.querySelector('#app').inert, 'passenger weapon clone restore failed');
   current = 'healing'; d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Hospital Building', 'hospital fixture did not open');
@@ -201,9 +254,36 @@ frame.addEventListener('load', async () => {
   editor.querySelector('[data-quick-apply]').click(); d.querySelector('[data-action="save"]').click();
   await waitFor(() => decoder.decode(healing.get('rulesmo.ini')).includes('SelfHealInfantryFrames=75 ; global') && decoder.decode(healing.get('healing.ini')).includes('InfantryGainSelfHeal=2 ; building') && !d.querySelector('#app').inert, 'hospital global and building settings did not save');
   check(versions.healing[0].paths.length === 2, 'hospital save did not back up both files');
-  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'hospital history missing');
-  d.querySelector('[data-restore="0"]').click();
+  d.querySelector('[data-action="history"]').click(); await restoreFirst();
   await waitFor(() => decoder.decode(healing.get('rulesmo.ini')).includes('SelfHealInfantryFrames=100 ; global') && decoder.decode(healing.get('healing.ini')).includes('InfantryGainSelfHeal=1 ; building') && !d.querySelector('#app').inert, 'hospital restore did not restore both files');
+  current = 'history'; d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'History Tank', 'history pagination fixture did not open');
+  d.querySelector('[data-action="history"]').click();
+  await waitFor(() => d.querySelector('[data-history-open="0"][data-mode="changes"]'), 'history pagination record missing');
+  d.querySelector('[data-history-open="0"][data-mode="changes"]').click();
+  await waitFor(() => d.querySelector('[data-history-page="next"]'), 'history pagination controls missing');
+  if (location.search.includes('visual')) { result.textContent = 'READY: history diff'; return; }
+  check(!d.querySelector('#changes-dialog img') && d.querySelector('[data-history-diff]').textContent.includes('<img src=x'), 'history diff did not escape file content');
+  check(d.querySelector('[data-history-expand]'), 'long changed lines cannot be expanded');
+  d.querySelector('[data-history-expand]').click();
+  check([...d.querySelectorAll('[data-history-text]')].some(node => node.textContent.length > 2000), 'long line was not expanded');
+  check(d.querySelectorAll('.history-line').length <= 200, 'diff rendered too many rows at once');
+  d.querySelector('[data-history-page="next"]').click();
+  check(d.querySelector('[data-history-diff]').textContent.includes('Extra249=yes'), 'next page omitted remaining changes');
+  d.querySelector('[data-history-mode="restore"]').click();
+  await waitFor(() => d.querySelector('[data-history-confirm]') && !d.querySelector('[data-history-confirm]').disabled, 'history restore preview missing');
+  versions.history[0].before[0].data = bytes('[HIST]\nCost=999\n');
+  d.querySelector('[data-history-confirm]').click();
+  await waitFor(() => d.querySelector('#toast').textContent.includes('恢复失败') && !d.querySelector('#app').inert, 'changed history target was not rejected');
+  check(decoder.decode(history.get('rulesmo.ini')).includes('Cost=200'), 'changed history target was restored');
+  versions.history[0].before[0].data = historyBefore; versions.history[0].missingAfter = true;
+  d.querySelector('[data-action="history"]').click();
+  await waitFor(() => d.querySelector('[data-history-open="0"][data-mode="changes"]'), 'history record missing');
+  d.querySelector('[data-history-open="0"][data-mode="changes"]').click();
+  await waitFor(() => d.querySelector('[data-history-diff]')?.textContent.includes('快照不可用'), 'missing after snapshot was not explained');
+  d.querySelector('[data-history-mode="restore"]').click();
+  await waitFor(() => d.querySelector('[data-history-confirm]') && !d.querySelector('[data-history-confirm]').disabled, 'missing after snapshot blocked valid restore preview');
+  d.querySelector('#changes-dialog [data-close]').click();
   current = 'missing'; d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Incomplete Tank', 'incomplete fixture did not open');
   cost = d.querySelector('[data-field="Cost"]'); cost.value = '125'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);

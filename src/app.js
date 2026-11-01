@@ -8,6 +8,7 @@ import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from 
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature, garrisonWeaponWarning, passengerWeapons, preparePassengerFire } from './quick-features.js';
+import { compareHistoryBytes } from './history-diff.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 
@@ -17,6 +18,8 @@ const fileInput = document.querySelector('#file-input');
 const folderInput = document.querySelector('#folder-input');
 const dialog = document.querySelector('#changes-dialog');
 const editorDialog = document.querySelector('#editor-dialog');
+let historyInstance = 0;
+dialog.addEventListener('cancel', () => { historyInstance++; dialog.classList.remove('history-dialog'); });
 const toast = document.querySelector('#toast');
 const state = { project: null, resources: null, desktopSession: null, demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), pendingFields: new Map(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
 const navigation = { entries: [], index: -1, trail: [] };
@@ -1218,31 +1221,133 @@ async function exportDesktopProject() {
 async function showDesktopHistory() {
   const session = state.desktopSession;
   if (!session) return;
+  const instance = ++historyInstance;
   app.inert = true;
   try {
     const versions = await desktop.listVersions(session.sessionId);
-    if (state.desktopSession?.sessionId !== session.sessionId) return;
-    dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">历史版本</h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body"><p>每条记录保存了当次操作之前的文件；恢复时只还原列出的文件，并先备份当前文件。</p>${versions.length ? versions.map((version, index) => `<div class="file-export"><div><strong>${h(new Date(version.createdMs).toLocaleString('zh-CN'))} · ${version.kind === 'restore' ? '恢复前' : '保存前'}</strong><div class="field-source" title="${h(version.paths.join('、'))}">${h(version.paths.join('、'))}</div></div><button class="btn sm" data-restore="${index}">恢复</button></div>`).join('') : '<p>还没有历史版本。首次保存后会自动创建备份。</p>'}</div>`;
-    dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
-    dialog.querySelectorAll('[data-restore]').forEach(button => button.addEventListener('click', async () => {
-      const version = versions[Number(button.dataset.restore)];
-      const unsaved = markChanges().length ? '当前未保存的修改会丢失。' : '';
-      if (!confirm(`${unsaved}将恢复该记录中的 ${version.paths.length} 个文件，并先备份当前文件。继续吗？`)) return;
-      dialog.close(); app.inert = true;
-      let restored = false;
+    if (historyInstance !== instance || state.desktopSession?.sessionId !== session.sessionId) return;
+    const project = state.project;
+    let sequence = 0;
+    const header = title => `<div class="dialog-head"><h2 id="changes-title">${h(title)}</h2><button data-close aria-label="关闭">×</button></div>`;
+    const bindClose = () => dialog.querySelector('[data-close]').addEventListener('click', () => { sequence++; historyInstance++; dialog.classList.remove('history-dialog'); dialog.close(); });
+    function showList() {
+      sequence++;
+      dialog.innerHTML = `${header('历史版本')}<div class="dialog-body history-body"><p>每条记录保留了操作前后的文件。查看当次修改，或预览从当前文件恢复到该记录操作前的差异。</p>${versions.length ? versions.map((version, index) => `<div class="file-export history-version"><div><strong>${h(new Date(version.createdMs).toLocaleString('zh-CN'))} · ${version.kind === 'restore' ? '恢复操作' : '保存操作'}</strong><div class="field-source" title="${h(version.paths.join('、'))}">${h(version.paths.join('、'))}</div></div><div class="history-actions"><button class="btn sm" data-history-open="${index}" data-mode="changes">查看当次修改</button><button class="btn sm" data-history-open="${index}" data-mode="restore">预览恢复</button></div></div>`).join('') : '<p>还没有历史版本。首次保存后会自动创建备份。</p>'}</div>`;
+      bindClose();
+      dialog.querySelectorAll('[data-history-open]').forEach(button => button.addEventListener('click', () => showVersion(Number(button.dataset.historyOpen), button.dataset.mode)));
+    }
+    async function showVersion(versionIndex, mode) {
+      const version = versions[versionIndex], token = ++sequence;
+      dialog.innerHTML = `${header('历史版本 · 正在读取')}<div class="dialog-body"><p>正在校验文件和历史记录，请稍候。</p></div>`;
+      bindClose();
       try {
-        const expected = await desktop.expectedFiles(state.project, version.paths);
-        await desktop.restoreVersion(session.sessionId, version.id, expected);
-        restored = true;
-        const refreshed = await desktop.refreshDirectory(session.sessionId);
-        const loaded = await loadFiles(desktop.localFiles(refreshed), { nativeSession: refreshed, skipConfirm: true });
-        if (!loaded) throw new Error('恢复完成，但重新读取游戏目录失败。请重新选择游戏目录。');
-        showToast('已恢复备份；恢复前的文件也已备份。');
+        const [files, expected] = await Promise.all([
+          desktop.versionFiles(session.sessionId, version.id),
+          desktop.expectedFiles(project, version.paths),
+        ]);
+        if (historyInstance !== instance || token !== sequence || !dialog.open || state.project !== project || state.desktopSession?.sessionId !== session.sessionId) return;
+        if (files.length !== version.paths.length || files.some((file, index) => file.path !== version.paths[index])) throw new Error('历史文件列表已发生变化，请重新打开历史版本。');
+        const targets = files.map(file => ({ path: file.path, expectedHash: file.before?.hash ?? null }));
+        const conflicts = files.filter((file, index) => file.currentError || file.currentHash !== expected[index].expectedHash);
+        const unavailable = files.filter(file => file.before && file.before.size === null);
+        const unsaved = markChanges().length;
+        const cache = new Map();
+        let activeIndex = 0, currentPage = 0, renderSequence = 0, selectedDiff = null, selectedBytes = null;
+        const modeLabel = mode === 'restore' ? '恢复预览' : '当次修改';
+        const description = mode === 'restore' ? '减号表示当前已保存文件中的内容，加号表示恢复后的内容。确认后只恢复列出的文件，并先备份当前文件。' : '减号表示该次操作前的内容，加号表示操作完成后的内容；不代表当前文件的状态。';
+        dialog.innerHTML = `${header(`历史版本 · ${modeLabel}`)}<div class="dialog-body history-body"><div class="history-toolbar"><button class="btn sm" data-history-list>← 返回列表</button><span>${h(new Date(version.createdMs).toLocaleString('zh-CN'))} · ${version.kind === 'restore' ? '恢复操作' : '保存操作'}</span></div><div class="history-tabs"><button class="btn sm ${mode === 'changes' ? 'primary' : ''}" data-history-mode="changes">当次修改</button><button class="btn sm ${mode === 'restore' ? 'primary' : ''}" data-history-mode="restore">恢复预览</button></div><p>${h(description)}</p>${mode === 'restore' && unsaved ? `<div class="quick-warnings history-warning">当前有 ${unsaved} 项未保存修改。恢复后会重新加载目录，所有未保存修改都会丢失，包括不在恢复列表中的文件；请先返回并保存或查看修改。</div>` : ''}${mode === 'restore' && conflicts.length ? `<div class="quick-warnings history-warning">磁盘文件已变化或无法核对：${h(conflicts.map(file => file.path).join('、'))}。当前差异基于项目加载时的内容，请重新加载目录后再恢复。</div>` : ''}${mode === 'restore' && unavailable.length ? `<div class="quick-warnings history-warning">恢复所需的历史快照不可用：${h(unavailable.map(file => file.path).join('、'))}。</div>` : ''}<label class="history-file-label">文件<select data-history-file>${files.map((file, index) => {
+          const left = mode === 'restore' ? expected[index].expectedHash : file.before?.hash ?? null;
+          const right = mode === 'restore' ? file.before?.hash ?? null : file.after?.hash ?? null;
+          const status = mode === 'changes' && file.afterError ? '快照不可用' : left === right ? '无变化' : left === null ? '新增文件' : right === null ? '删除文件' : '内容修改';
+          return `<option value="${index}">${h(file.path)} · ${status}</option>`;
+        }).join('')}</select></label><div data-history-diff aria-live="polite"></div></div><div class="dialog-actions"><button class="btn" data-history-list>返回列表</button>${mode === 'restore' ? `<button class="btn primary" data-history-confirm disabled>确认恢复</button>` : '<button class="btn primary" data-history-mode="restore">预览恢复</button>'}</div>`;
+        bindClose();
+        dialog.querySelectorAll('[data-history-list]').forEach(button => button.addEventListener('click', showList));
+        dialog.querySelectorAll('[data-history-mode]').forEach(button => button.addEventListener('click', () => showVersion(versionIndex, button.dataset.historyMode)));
+        const panel = dialog.querySelector('[data-history-diff]'), select = dialog.querySelector('[data-history-file]');
+        const confirmButton = dialog.querySelector('[data-history-confirm]');
+        const cachedSnapshot = async (index, side) => {
+          if (side === 'after' && files[index].afterError) throw new Error(files[index].afterError);
+          const snapshot = files[index][side];
+          if (!snapshot) return null;
+          if (snapshot.size === null) throw new Error(`${files[index].path} 的${side === 'before' ? '操作前' : '操作后'}快照不可用。`);
+          const key = `${index}:${side}`;
+          if (!cache.has(key)) cache.set(key, desktop.versionSnapshot(session.sessionId, version.id, index, side));
+          return cache.get(key);
+        };
+        function savedBytes(path) {
+          const file = project.files.find(item => lower(item.path) === lower(path) && !item.sourceArchive);
+          return file?.originalBytes ?? null;
+        }
+        function download(bytes, path, label) {
+          if (bytes === null) return;
+          const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+          const link = document.createElement('a');
+          link.href = url; link.download = `${path.split('/').pop()}.${label}.ini`; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 0);
+        }
+        function drawRows() {
+          const rows = selectedDiff.rows, pageSize = 200, pages = Math.max(1, Math.ceil(rows.length / pageSize));
+          currentPage = Math.max(0, Math.min(currentPage, pages - 1));
+          const start = currentPage * pageSize;
+          const removed = rows.reduce((count, row) => count + (row.type === 'removed'), 0), added = rows.length - removed;
+          const summary = selectedDiff.identical ? '文件内容没有变化。' : rows.length ? `删除 ${removed} 行 · 新增 ${added} 行；仅显示变更行。` : (selectedDiff.note || (selectedDiff.beforeExists ? '删除空文件。' : '新增空文件。'));
+          const beforeLabel = mode === 'restore' ? '当前文件' : '操作前文件', afterLabel = mode === 'restore' ? '恢复目标' : '操作后文件';
+          panel.innerHTML = `<div class="history-diff-meta"><span>${h(summary)}</span><div class="history-actions">${selectedBytes[0] !== null ? `<button class="btn sm" data-history-download="0">下载${beforeLabel}</button>` : ''}${selectedBytes[1] !== null ? `<button class="btn sm" data-history-download="1">下载${afterLabel}</button>` : ''}</div></div>${files[activeIndex].before === null ? '<p class="history-encoding">操作前没有同路径独立文件；若原规则来自 MIX，历史记录不包含 MIX 内的原文件快照。</p>' : ''}${selectedDiff.beforeEncoding || selectedDiff.afterEncoding ? `<p class="history-encoding">${beforeLabel}：${h(selectedDiff.beforeEncoding)} · ${afterLabel}：${h(selectedDiff.afterEncoding)}</p>` : ''}${selectedDiff.note && rows.length ? `<div class="quick-warnings history-warning">${h(selectedDiff.note)}</div>` : ''}${rows.length ? `<div class="history-diff-lines">${rows.slice(start, start + pageSize).map((row, offset) => `<div class="history-line ${row.type}"><span class="history-sign">${row.type === 'removed' ? '−' : '+'}</span><span class="history-number">${row.line}</span><span class="history-line-content"><span class="history-section">${row.section ? `[${h(row.section)}]` : '文件开头'}</span><code data-history-text="${start + offset}">${row.text ? h(row.text.length > 400 ? `${row.text.slice(0, 400)}…` : row.text) : '（空行）'}</code>${row.text.length > 400 ? `<button type="button" class="text-action" data-history-expand="${start + offset}">展开整行</button>` : ''}</span><span class="history-eol">${h(row.eol)}</span></div>`).join('')}</div><div class="history-pages"><button class="btn sm" data-history-page="prev" ${currentPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${currentPage + 1} / ${pages} 页，共 ${rows.length} 行</span><button class="btn sm" data-history-page="next" ${currentPage + 1 >= pages ? 'disabled' : ''}>下一页</button></div>` : ''}`;
+          panel.querySelectorAll('[data-history-page]').forEach(button => button.addEventListener('click', () => { currentPage += button.dataset.historyPage === 'next' ? 1 : -1; drawRows(); }));
+          panel.querySelectorAll('[data-history-download]').forEach(button => button.addEventListener('click', () => {
+            const side = Number(button.dataset.historyDownload);
+            download(selectedBytes[side], files[activeIndex].path, side === 0 ? 'left' : 'right');
+          }));
+          panel.querySelectorAll('[data-history-expand]').forEach(button => button.addEventListener('click', () => {
+            const index = Number(button.dataset.historyExpand);
+            panel.querySelector(`[data-history-text="${index}"]`).textContent = rows[index].text;
+            button.remove();
+          }));
+        }
+        async function showFile(index) {
+          activeIndex = index; currentPage = 0; const fileToken = ++renderSequence;
+          if (confirmButton) confirmButton.disabled = true;
+          panel.innerHTML = '<p>正在读取并计算差异，请稍候。</p>';
+          try {
+            const left = mode === 'restore' ? savedBytes(files[index].path) : await cachedSnapshot(index, 'before');
+            const right = await cachedSnapshot(index, mode === 'restore' ? 'before' : 'after');
+            if (historyInstance !== instance || token !== sequence || fileToken !== renderSequence || !dialog.open) return;
+            selectedBytes = [left, right]; selectedDiff = compareHistoryBytes(left, right); drawRows();
+            if (confirmButton) confirmButton.disabled = conflicts.length > 0 || unavailable.length > 0;
+          } catch (error) {
+            if (historyInstance !== instance || token !== sequence || fileToken !== renderSequence || !dialog.open) return;
+            panel.innerHTML = `<div class="quick-warnings history-warning">无法显示此文件的差异：${h(error.message || error)}</div>`;
+          }
+        }
+        select.addEventListener('change', () => showFile(Number(select.value)));
+        if (confirmButton) confirmButton.addEventListener('click', async () => {
+          if (confirmButton.disabled || state.project !== project || state.desktopSession?.sessionId !== session.sessionId) return;
+          const pending = markChanges().length;
+          if (!confirm(`${pending ? `当前 ${pending} 项未保存修改会丢失。` : ''}将恢复该记录中的 ${files.length} 个文件，并先备份当前文件。继续吗？`)) return;
+          sequence++; historyInstance++; dialog.classList.remove('history-dialog'); dialog.close(); app.inert = true;
+          let restored = false;
+          try {
+            await desktop.restoreVersion(session.sessionId, version.id, expected, targets);
+            restored = true;
+            const refreshed = await desktop.refreshDirectory(session.sessionId);
+            const loaded = await loadFiles(desktop.localFiles(refreshed), { nativeSession: refreshed, skipConfirm: true });
+            if (!loaded) throw new Error('恢复完成，但重新读取游戏目录失败。请重新选择游戏目录。');
+            showToast('已恢复备份；恢复前的文件也已备份。');
+          } catch (error) {
+            if (restored) { state.desktopSession = null; render(); }
+            showToast(`恢复失败：${error.message || error}`);
+          } finally { app.inert = false; }
+        });
+        if (files.length) showFile(0);
       } catch (error) {
-        if (restored) { state.desktopSession = null; render(); }
-        showToast(`恢复失败：${error.message || error}`);
-      } finally { app.inert = false; }
-    }));
+        if (historyInstance !== instance || token !== sequence || !dialog.open) return;
+        dialog.innerHTML = `${header('历史版本 · 读取失败')}<div class="dialog-body"><div class="quick-warnings">${h(error.message || error)}</div></div><div class="dialog-actions"><button class="btn" data-history-list>返回列表</button></div>`;
+        bindClose(); dialog.querySelector('[data-history-list]').addEventListener('click', showList);
+      }
+    }
+    showList();
+    dialog.classList.add('history-dialog');
     dialog.showModal();
   } catch (error) { showToast(`无法读取历史版本：${error.message || error}`); }
   finally { app.inert = false; }
@@ -1845,6 +1950,7 @@ function openAddField() {
 }
 
 function showChanges() {
+  historyInstance++; dialog.classList.remove('history-dialog');
   const changes = markChanges();
   const files = [...new Set(changes.map(change => change.file))];
   dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">修改与导出 <span style="color:#90a58e;font:11px var(--mono)">${changes.length} CHANGES</span></h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body">${changes.length ? `<p>每个按钮下载对应的修改文件。MIX 中的规则会导出为独立 INI，不会修改资源包；文件夹结构不会自动创建。</p>${files.map((file,index) => `<div class="file-export"><strong>${h(sourceName(file))}</strong><button class="btn primary sm" data-export="${index}">${icon('download',14)} 下载 ${h(file.name)}</button></div>`).join('')}<div style="margin-top:18px">${changes.map(change => change.kind === 'section' ? `<div class="change-row"><div class="where">${h(sourceName(change.file))}</div><div class="after">新增规则段 [${h(change.section)}]</div></div>` : `<div class="change-row"><div class="where">${h(sourceName(change.file))} / [${h(change.section)}]</div><div>${h(change.key)}: <span class="before">${h(change.before === null ? '（新增）' : change.before || '（空）')}</span> → <span class="after">${h(change.kind === 'remove' ? '（已移除）' : change.after || '（空）')}</span></div></div>`).join('')}</div>` : '<p>还没有修改。选择一个对象，修改属性后可在这里预览并下载。</p>'}</div>`;
