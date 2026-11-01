@@ -142,9 +142,14 @@ frame.addEventListener('load', async () => {
   editor = d.querySelector('#editor-dialog');
   const ability = editor.querySelector('[data-choice="EMPIMMUNE"]'); check(ability, 'desktop ability chooser missing');
   ability.checked = true; ability.dispatchEvent(new w.Event('change', { bubbles: true })); editor.querySelector('[data-editor-apply]').click(); await delay(30);
+  d.querySelector('[data-action="quick-feature"]').click(); editor = d.querySelector('#editor-dialog');
+  editor.querySelector('[data-quick-next]').click();
+  check(editor.textContent.includes('保存为独立 INI'), 'MIX quick feature preview did not describe output');
+  editor.querySelector('[data-quick-apply]').click();
   d.querySelector('[data-action="save"]').click();
   await waitFor(() => packed.has('units.ini') && decoder.decode(packed.get('units.ini')).includes('EliteAbilities=EMPIMMUNE') && !d.querySelector('#app').inert, 'desktop ability selection did not save');
   check(!decoder.decode(packed.get('units.ini')).includes('Sensors='), 'unfilled field was written during desktop save');
+  for (const item of ['Passengers=5', 'SizeLimit=2', 'PipScale=Passengers', 'OpenTopped=yes', 'Cost=200 ; packed']) check(decoder.decode(packed.get('units.ini')).includes(item), `MIX quick feature save missing ${item}`);
   d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'ability save backup missing');
   d.querySelector('[data-restore="0"]').click();
   await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && !d.querySelector('#app').inert, 'restoring ability save did not restore MIX source');
@@ -153,7 +158,7 @@ frame.addEventListener('load', async () => {
   cost = d.querySelector('[data-field="Cost"]'); cost.value = '125'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
   d.querySelector('[data-action="save"]').click();
   check(d.querySelector('#toast').textContent.includes('加载不完整') && decoder.decode(missing.get('rulesmo.ini')).includes('Cost=100'), 'incomplete includes did not block saving');
-  result.textContent = 'PASS: desktop open, direct save, conflict protection, backup, restore, save as and MIX includes';
+  result.textContent = 'PASS: desktop open, direct save, conflict protection, backup, restore, save as, MIX includes and quick features';
  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
 });
 frame.src = 'desktop-fixture.html';

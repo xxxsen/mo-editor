@@ -7,6 +7,7 @@ import { availableFields } from './field-catalog.js';
 import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
+import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature } from './quick-features.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 
@@ -449,7 +450,7 @@ function renderDetail(entity) {
   const sec = project.section(entity.id);
   const tab = state.tab;
   const detailBody = !sec ? `<div class="no-detail"><div><strong>找不到这个对象的定义</strong>它被列入类型列表，但当前导入的文件中没有 [${h(entity.id)}]。<br>请检查是否缺少 include 文件。</div></div>` : tab === 'basic' ? renderBasic(entity) : tab === 'relations' ? renderRelations(entity) : renderRaw(entity);
-  return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" ${entity.type === 'projectile' ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-actions">${sec ? '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
+  return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" ${entity.type === 'projectile' ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-actions">${sec ? quickFeatureButton(entity) + '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
 }
 
 const unitBasic = ['Strength', 'Cost', 'Speed', 'Sight', 'Armor', 'TechLevel'];
@@ -464,6 +465,9 @@ const superweaponEffects = ['SW.Range', 'SW.Damage', 'SW.Warhead', 'SW.Deferment
 
 function actualEntity(entity) {
   return entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
+}
+function quickFeatureButton(entity) {
+  return quickFeaturesFor(actualEntity(entity).type).length ? '<button type="button" class="btn sm" data-action="quick-feature">＋ 快捷功能</button>' : '';
 }
 function fieldInfoFor(entity, key) {
   const target = actualEntity(entity);
@@ -633,7 +637,7 @@ function renderGlobal(entity) {
     return `<div data-global-row data-search-text="${h(search)}" ${q && !search.includes(q) ? 'hidden' : ''}>${fieldMarkup(entity, field.name)}${field.pending ? `<button type="button" class="pending-field-remove" data-action="remove-pending-field" data-key="${h(field.name)}">移除未设置项</button>` : ''}${info.inlineHint ? `<p class="global-field-hint">${h(info.description)}</p>` : ''}</div>`;
   };
   const hint = lower(entity.id) === 'multiplayerdialogsettings' ? '游戏模式或启动器可能覆盖这些默认值。' : '显示当前规则段中的全部已定义参数。';
-  return `<div class="detail-top"><div class="detail-kicker">${entity.type === 'global' ? 'GLOBAL SETTINGS' : 'RULE SECTION'} <span>/</span> ${h(entity.id.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon">${icon('global', 32)}</div><div class="detail-name"><h2>${h(entity.name)}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${fields.length} 个参数</p></div><div class="hero-actions">${entity.type === 'sections' ? '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${state.changedSections.has(lower(entity.id)) ? '● 有修改' : '● 已解析'}</div></div></div></div><div class="detail-body"><div class="section-head"><div><h3>${h(entity.description || '全局规则')}</h3><p>${h(hint)}</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="search-wrap global-search-wrap">${icon('search', 15)}<input class="search" id="global-search" type="search" value="${h(state.globalSearch)}" placeholder="在此设置中搜索名称、字段或值..." aria-label="搜索全局参数"></div>${common.length ? `<div class="global-group-title">常用设置 <span>${common.length}</span></div><div class="field-grid global-grid">${common.map(row).join('')}</div>` : ''}<div class="global-group-title">${common.length ? '其他参数' : '全部参数'} <span>${other.length}</span></div><div class="field-grid global-grid">${other.map(row).join('')}</div></div>`;
+  return `<div class="detail-top"><div class="detail-kicker">${entity.type === 'global' ? 'GLOBAL SETTINGS' : 'RULE SECTION'} <span>/</span> ${h(entity.id.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon">${icon('global', 32)}</div><div class="detail-name"><h2>${h(entity.name)}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${fields.length} 个参数</p></div><div class="hero-actions">${entity.type === 'sections' ? quickFeatureButton(entity) + '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${state.changedSections.has(lower(entity.id)) ? '● 有修改' : '● 已解析'}</div></div></div></div><div class="detail-body"><div class="section-head"><div><h3>${h(entity.description || '全局规则')}</h3><p>${h(hint)}</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="search-wrap global-search-wrap">${icon('search', 15)}<input class="search" id="global-search" type="search" value="${h(state.globalSearch)}" placeholder="在此设置中搜索名称、字段或值..." aria-label="搜索全局参数"></div>${common.length ? `<div class="global-group-title">常用设置 <span>${common.length}</span></div><div class="field-grid global-grid">${common.map(row).join('')}</div>` : ''}<div class="global-group-title">${common.length ? '其他参数' : '全部参数'} <span>${other.length}</span></div><div class="field-grid global-grid">${other.map(row).join('')}</div></div>`;
 }
 
 function renderVerses(entity) {
@@ -1009,6 +1013,8 @@ app.addEventListener('click', event => {
     openCreateObject(false);
   } else if (button.dataset.action === 'clone-object') {
     openCreateObject(true);
+  } else if (button.dataset.action === 'quick-feature') {
+    openQuickFeature();
   } else if (button.dataset.action === 'choose-main') {
     openMainFilePicker();
   } else if (button.dataset.action === 'open') fileInput.click();
@@ -1253,6 +1259,85 @@ function showEditorError(message) {
   error.textContent = message;
 }
 editorDialog.addEventListener('input', () => editorDialog.querySelector('[data-editor-error]')?.remove());
+
+function quickFieldControl(field) {
+  const value = String(field.value ?? '');
+  const attr = `data-quick-field="${h(field.key)}" aria-label="${h(field.key)}"`;
+  if (field.type === 'integer') return `<input ${attr} type="text" inputmode="numeric" value="${h(value)}" autocomplete="off" placeholder="${field.required ? '请输入整数' : '留空不设置'}">`;
+  let options;
+  if (field.type === 'boolean') {
+    const truthy = /^(yes|true|1)$/i.test(value), falsy = /^(no|false|0)$/i.test(value);
+    const trueStyle = /^(true|false)$/i.test(value);
+    options = [{ id: truthy ? value : trueStyle ? 'true' : 'yes', label: '是' }, { id: falsy ? value : trueStyle ? 'false' : 'no', label: '否' }];
+    if (value && !truthy && !falsy) options.unshift({ id: value, label: `当前值：${value}` });
+  } else {
+    options = enumChoices('pipScale', value).map(option => ({ id: lower(option.id) === lower(value) ? value : option.id, label: `${option.label} / ${option.id}` }));
+  }
+  if (!value) options.unshift({ id: '', label: field.required ? '请选择' : '未设置（保持不变）' });
+  return `<select ${attr}>${options.map(option => `<option value="${h(option.id)}" ${option.id === value ? 'selected' : ''}>${h(option.label)}</option>`).join('')}</select>`;
+}
+
+function openQuickFeature() {
+  const project = state.project, section = state.selected;
+  const selected = entityFor(section, state.selectedType) || entityFor(section);
+  if (!selected || !project.section(section)) return;
+  const entity = actualEntity(selected), features = quickFeaturesFor(entity.type);
+  if (!features.length) return;
+  let plan = null;
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">添加快捷功能</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-quick-form><p>为 <strong>${h(sectionTitle(entity))} [${h(section)}]</strong> 配置功能。已配置字段会显示当前值，确认后会覆盖这些值。</p><div class="editor-fields"><label>选择功能<select id="quick-feature-type">${features.map(feature => `<option value="${h(feature.id)}">${h(feature.label)}</option>`).join('')}</select></label><div data-quick-details></div></div></div><div data-quick-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-quick-back hidden>返回修改</button><button type="button" class="btn primary" data-quick-next>预览修改</button><button type="button" class="btn primary" data-quick-apply hidden>确认添加</button></div>`;
+  const form = editorDialog.querySelector('[data-quick-form]'), preview = editorDialog.querySelector('[data-quick-preview]');
+  const type = editorDialog.querySelector('#quick-feature-type'), details = editorDialog.querySelector('[data-quick-details]');
+  const next = editorDialog.querySelector('[data-quick-next]'), back = editorDialog.querySelector('[data-quick-back]'), apply = editorDialog.querySelector('[data-quick-apply]');
+  const feature = () => features.find(item => item.id === type.value);
+  function drawFields() {
+    const current = feature();
+    const fields = quickFeatureFields(project, section, current);
+    const rows = fields.map(field => {
+      const info = fieldInfoFor(entity, field.key);
+      const source = field.current ? `已有值 · ${sourceName(field.current.file)}${field.current.line.patch !== undefined ? ' · 未保存' : ''}` : field.required ? '未配置 · 建议值' : '未配置 · 留空不写入';
+      return `<label class="quick-field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.key)}${quickFieldControl(field)}<span class="quick-field-source" title="${h(source)}">${h(source)}</span></label>`;
+    }).join('');
+    const extra = current.id === 'transport' ? '已有的乘员允许／禁止名单、炮手等规则不会自动修改；预览会提示可能的限制。' : '建筑美术，以及步兵的 Occupier、OccupyWeapon 和 EliteOccupyWeapon 等条件不会自动修改。';
+    details.innerHTML = `<p class="create-note">${h(current.description)}</p><div class="quick-fields">${rows}</div><p class="create-note quick-feature-note">${h(extra)} 可选项留空时不会新增字段。</p>`;
+  }
+  type.addEventListener('change', drawFields);
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  back.addEventListener('click', () => {
+    plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false;
+    editorDialog.querySelector('[data-editor-error]')?.remove();
+    next.focus({ preventScroll: true });
+  });
+  next.addEventListener('click', () => {
+    try {
+      if (state.project !== project || state.selected !== section) throw new Error('当前项目或对象已改变，请重新打开快捷功能。');
+      const values = Object.fromEntries([...details.querySelectorAll('[data-quick-field]')].map(input => [input.dataset.quickField, input.value]));
+      plan = prepareQuickFeature(project, { featureId: feature().id, type: entity.type, section, values });
+      const changes = plan.changes.length ? plan.changes.map(change => {
+        const info = fieldInfoFor(entity, change.key), before = change.before === null ? '未配置' : change.before || '空值';
+        const location = change.file ? `${sourceName(change.file)}${change.file.sourceArchive ? '（保存为独立 INI）' : ''}` : '';
+        return `<div class="quick-change"><div>${fieldNameMarkup(info, change.key)}<small>${change.before === null ? '新增' : '修改'} · ${h(location)}</small></div><div class="quick-change-values"><span>${h(before)}</span><span aria-hidden="true">→</span><strong>${h(change.after)}</strong></div></div>`;
+      }).join('') : '<p class="create-note">当前设置没有产生修改。</p>';
+      const warnings = plan.warnings.length ? `<div class="quick-warnings"><strong>请留意</strong><ul>${plan.warnings.map(warning => `<li>${h(warning)}</li>`).join('')}</ul></div>` : '';
+      preview.innerHTML = `<p><strong>${h(plan.feature.label)}</strong> · [${h(section)}]</p><p>确认后加入未保存的修改；点击主界面的「保存」后才会写入文件。</p><div class="quick-changes">${changes}</div>${warnings}`;
+      form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
+      editorDialog.querySelector('[data-editor-error]')?.remove();
+      apply.focus({ preventScroll: true });
+    } catch (error) { showEditorError(error.message); }
+  });
+  apply.addEventListener('click', () => {
+    if (!plan || state.project !== project || state.selected !== section) { showEditorError('当前项目或对象已改变，请重新预览。'); return; }
+    if (plan.changes.length) {
+      state.project = plan.project;
+      state.changedSections = new Set(markChanges().map(change => lower(change.section)));
+    }
+    editorDialog.close();
+    render();
+    showToast(plan.changes.length ? `已添加 ${plan.feature.label} 的 ${plan.changes.length} 项修改；点击保存后写入规则文件。` : '当前设置没有产生修改。');
+  });
+  drawFields();
+  editorDialog.showModal();
+  type.focus({ preventScroll: true });
+}
 
 function openCreateObject(copyCurrent) {
   const project = state.project;

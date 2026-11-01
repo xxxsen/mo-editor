@@ -1,0 +1,76 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Quick features check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[VehicleTypes]\n0=TANK\n[BuildingTypes]\n0=HOUSE\n[InfantryTypes]\n0=FOOT\n[TANK]\nName=Tank\nCost=100\nPassengers=2 ; keep\nOpenTopped=no\nPipScale=Ammo\nNoManualEnter=yes\nPassengers.Allowed=FOOT\nCustomField=yes ; preserve\n[HOUSE]\nName=House\nCanBeOccupied=no\nMaxNumberOccupants=3\nCanOccupyFire=false\nSelectable=no\n[FOOT]\nName=Foot\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('[data-entity="TANK"]'), 'fixture did not load');
+  d.querySelector('[data-entity="TANK"]').click();
+  let cost = d.querySelector('[data-field="Cost"]'); cost.value = '150'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  check(count() === 1, 'unrelated draft not set');
+  d.querySelector('[data-action="quick-feature"]').click();
+  let dialog = d.querySelector('#editor-dialog');
+  const field = key => dialog.querySelector(`[data-quick-field="${key}"]`);
+  check(dialog.open && dialog.querySelector('#quick-feature-type').value === 'transport', 'vehicle feature is missing');
+  check(field('Passengers').value === '2' && field('OpenTopped').value === 'no' && field('PipScale').value === 'Ammo', 'existing values not filled');
+  check(field('SizeLimit').value === '2' && field('NoManualEnter').value === 'yes' && field('NoManualUnload').value === '', 'suggestions or optional values incorrect');
+  check(dialog.textContent.includes('已有值') && dialog.textContent.includes('建议值') && dialog.textContent.includes('留空不写入'), 'field provenance is missing');
+  const bounds = dialog.getBoundingClientRect(); check(bounds.top >= 0 && bounds.bottom <= w.innerHeight, 'quick feature dialog exceeds viewport');
+  field('SizeLimit').value = '-1'; dialog.querySelector('[data-quick-next]').click();
+  check(dialog.querySelector('[role="alert"]')?.textContent.includes('SizeLimit') && count() === 1, 'invalid value did not stop preview');
+  field('SizeLimit').value = '2'; field('Passengers').value = '4'; field('PipScale').value = 'Passengers'; field('OpenTopped').value = 'yes'; field('NoManualEnter').value = 'no';
+  dialog.querySelector('[data-quick-next]').click();
+  check(!dialog.querySelector('[data-quick-preview]').hidden && dialog.textContent.includes('Passengers.Allowed'), 'preview or existing restriction warning missing');
+  check(dialog.textContent.includes('新增') && dialog.textContent.includes('修改') && count() === 1, 'preview did not distinguish additions and changes or altered draft');
+  dialog.querySelector('[data-quick-back]').click();
+  check(field('Passengers').value === '4' && field('PipScale').value === 'Passengers', 'back lost form values');
+  dialog.querySelector('[data-quick-next]').click(); dialog.querySelector('[data-editor-close]').click();
+  check(count() === 1, 'cancel changed current project');
+  d.querySelector('[data-action="quick-feature"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(field('Passengers').value === '2' && field('OpenTopped').value === 'no', 'cancel changed displayed values');
+  field('Passengers').value = '4'; field('PipScale').value = 'Passengers'; field('OpenTopped').value = 'yes'; field('NoManualEnter').value = 'no';
+  dialog.querySelector('[data-quick-next]').click(); dialog.querySelector('[data-quick-apply]').click();
+  check(!dialog.open && count() === 6, 'vehicle configuration was not applied atomically');
+  check(d.querySelector('[data-field="Cost"]').value === '150', 'earlier pending value was lost');
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="Passengers"]').value === '4' && d.querySelector('[data-field="SizeLimit"]').value === '2', 'vehicle fields not visible');
+  check(d.querySelector('[data-field="NoManualEnter"]').value === 'no' && !d.querySelector('[data-field="NoManualUnload"]'), 'optional fields written incorrectly');
+  d.querySelector('[data-category="sections"]').click();
+  const search = d.querySelector('#search'); search.value = 'TANK'; search.dispatchEvent(new w.Event('input', { bubbles: true })); await delay(150);
+  d.querySelector('[data-entity="TANK"][data-type="sections"]').click();
+  check(d.querySelector('[data-action="quick-feature"]'), 'typed object in all-sections view has no quick feature');
+  d.querySelector('[data-action="quick-feature"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(field('Passengers').value === '4' && field('SizeLimit').value === '2', 'reopened feature lost pending values');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-category="building"]').click();
+  await waitFor(() => d.querySelector('[data-entity="HOUSE"]'), 'building missing');
+  d.querySelector('[data-entity="HOUSE"]').click(); d.querySelector('[data-action="quick-feature"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('#quick-feature-type').value === 'garrison' && field('CanBeOccupied').value === 'no' && field('MaxNumberOccupants').value === '3' && field('CanOccupyFire').value === 'false', 'building fields not prefilled');
+  check(!field('Passengers') && !field('OpenTopped'), 'vehicle-only fields appeared on building');
+  field('CanBeOccupied').value = 'yes'; field('MaxNumberOccupants').value = '7'; field('CanOccupyFire').value = 'true';
+  dialog.querySelector('[data-quick-next]').click();
+  check(dialog.textContent.includes('Selectable'), 'building restriction not reported');
+  dialog.querySelector('[data-quick-apply]').click();
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="MaxNumberOccupants"]').value === '7' && d.querySelector('[data-field="CanBeOccupied"]').value === 'yes' && !d.querySelector('[data-field="Passengers"]'), 'building configuration not applied');
+  d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="FOOT"]').click();
+  check(!d.querySelector('[data-action="quick-feature"]'), 'unsupported infantry has quick feature button');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  check(saved.includes('Passengers=4 ; keep') && saved.includes('SizeLimit=2') && saved.includes('PipScale=Passengers') && saved.includes('OpenTopped=yes'), 'transport changes missing from export');
+  check(saved.includes('Cost=150') && saved.includes('CustomField=yes ; preserve') && saved.includes('Passengers.Allowed=FOOT') && !saved.includes('NoManualUnload='), 'export lost unrelated data or wrote empty optional field');
+  check(saved.includes('CanBeOccupied=yes') && saved.includes('MaxNumberOccupants=7') && saved.includes('CanOccupyFire=true') && saved.includes('Selectable=no'), 'building changes missing from export');
+  result.textContent = 'PASS: quick feature prefilling, validation, preview, cancellation, draft, warnings, type-specific rules and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>
