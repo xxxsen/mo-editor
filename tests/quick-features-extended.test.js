@@ -41,7 +41,7 @@ test('armed buildings warn about garrison weapon conflicts without altering thei
 test('income and stealth prefill existing values and preserve unselected optional fields', () => {
   const project = fixture();
   const income = valuesFor(project, 'HOUSE', 'building', 'income');
-  assert.deepEqual(income, { ProduceCashAmount: '10', ProduceCashDelay: '100', ProduceCashStartup: '', ProduceCashDisplay: '' });
+  assert.deepEqual(income, { ProduceCashAmount: '10', ProduceCashDelay: '100', ProduceCashStartup: '', ProduceCashDisplay: '', Capturable: '', NeedsEngineer: '', Unsellable: '' });
   const candidate = apply(project, 'HOUSE', 'building', 'income', { ProduceCashAmount: '25', ProduceCashStartup: '-50', ProduceCashDisplay: 'yes' });
   assert.equal(project.get('HOUSE', 'ProduceCashAmount').value, '10');
   assert.equal(candidate.project.get('HOUSE', 'ProduceCashStartup').value, '-50');

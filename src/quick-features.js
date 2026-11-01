@@ -16,6 +16,8 @@ const optionalInteger = key => ({ key, type: 'integer' });
 const optionalSigned = key => ({ key, type: 'signed' });
 const multiple = (key, type) => ({ key, type, allowClear: true });
 const reference = (key, type) => ({ key, type, allowClear: true });
+const techCaptureFields = () => ['Capturable', 'NeedsEngineer', 'Unsellable'].map(defaultableBoolean);
+const globalHealField = (key, type) => ({ key, type, targetSection: 'General' });
 const passengerExperienceFields = () => [
   defaultableBoolean('Trainable'),
   { ...defaultableBoolean('Experience.FromPassengers'), defaultHint: 'Ares 默认：是' },
@@ -57,13 +59,35 @@ export const QUICK_FEATURES = [
     ],
   },
   {
-    id: 'income', label: '建筑自动产生资金', types: ['building'],
-    description: '设置建筑产生资金的金额、间隔，以及取得建筑时的初始金额。',
-    note: '初始金额和显示设置可选；负金额的效果取决于游戏版本。',
+    id: 'income', label: '科技采油井／建筑自动产钱', types: ['building'],
+    description: '设置科技采油井、银行等建筑定期产生的资金，以及占领时的一次性收入。',
+    note: '可选设置工程师占领和出售限制；未选的占领字段不会写入。负金额及占领奖励的具体效果取决于游戏版本。',
     fields: [
       { key: 'ProduceCashAmount', type: 'signed', suggested: '20', required: true },
       { key: 'ProduceCashDelay', type: 'integer', suggested: '100', required: true },
-      optionalSigned('ProduceCashStartup'), boolean('ProduceCashDisplay'),
+      optionalSigned('ProduceCashStartup'), boolean('ProduceCashDisplay'), ...techCaptureFields(),
+    ],
+  },
+  {
+    id: 'tech-hospital', label: '科技医院／步兵自动治疗', types: ['building'],
+    description: '为建筑添加科技医院的所属方步兵自愈效果。恢复间隔和恢复量属于全局配置，修改后影响所有玩家。',
+    note: 'InfantryGainSelfHeal=1 是心灵终结科技医院的常用值，0 表示关闭；多个提供者的效果可叠加。[General] 字段影响所有玩家和相关建筑，修改前请检查预览。',
+    fields: [
+      { key: 'InfantryGainSelfHeal', type: 'integer', suggested: '1', required: true },
+      globalHealField('SelfHealInfantryFrames', 'positiveInteger'),
+      globalHealField('SelfHealInfantryAmount', 'integer'),
+      ...techCaptureFields(),
+    ],
+  },
+  {
+    id: 'tech-machine-shop', label: '科技机械商店／单位自动维修', types: ['building'],
+    description: '为建筑添加科技机械商店的所属方单位自动维修效果。恢复间隔和恢复量属于全局配置，修改后影响所有玩家。',
+    note: 'UnitsGainSelfHeal=1 是心灵终结科技机械商店的常用值，0 表示关闭；多个提供者的效果可叠加。[General] 字段影响所有玩家和相关建筑，修改前请检查预览。',
+    fields: [
+      { key: 'UnitsGainSelfHeal', type: 'integer', suggested: '1', required: true },
+      globalHealField('SelfHealUnitFrames', 'positiveInteger'),
+      globalHealField('SelfHealUnitAmount', 'integer'),
+      ...techCaptureFields(),
     ],
   },
   {
@@ -161,8 +185,9 @@ export function quickFeaturesFor(type) { return QUICK_FEATURES.filter(feature =>
 export function quickFeatureFields(project, section, feature) {
   if (!project.section(section)) throw new Error(`找不到规则段 [${section}]。`);
   return feature.fields.map(field => {
-    const current = project.get(section, field.key);
-    return { ...field, current, value: current ? current.value : field.suggested || '' };
+    const target = field.targetSection || section;
+    const current = project.get(target, field.key);
+    return { ...field, current, unavailable: !!field.targetSection && !project.section(target), value: current ? current.value : field.suggested || '' };
   });
 }
 
@@ -281,6 +306,21 @@ function warningsFor(project, section, type, feature, values) {
       warnings.push('未检测到 OpenTopped=yes 或 Gunner=yes；乘员击杀经验归属需要相应的开放式载具或炮手逻辑。');
     }
   }
+  if (feature.id === 'income' || feature.id === 'tech-hospital' || feature.id === 'tech-machine-shop') {
+    if (enabled(current('NeedsEngineer')) && disabled(current('Capturable'))) warnings.push('NeedsEngineer 已开启，但 Capturable 已关闭，请核对工程师占领设置。');
+  }
+  if (feature.id === 'tech-hospital' || feature.id === 'tech-machine-shop') {
+    const infantry = feature.id === 'tech-hospital';
+    const gain = infantry ? 'InfantryGainSelfHeal' : 'UnitsGainSelfHeal';
+    const frames = infantry ? 'SelfHealInfantryFrames' : 'SelfHealUnitFrames';
+    const amount = infantry ? 'SelfHealInfantryAmount' : 'SelfHealUnitAmount';
+    if (Number(current(gain)) === 0) warnings.push(`${gain}=0 时该建筑不会提供此类自动恢复。`);
+    if (current(frames) !== '' && Number(current(frames)) === 0) warnings.push(`[General] ${frames}=0 可能导致游戏错误，请使用大于 0 的间隔。`);
+    if (current(amount) !== '' && Number(current(amount)) === 0) warnings.push(`[General] ${amount}=0 时，对应的全局自动恢复量为 0。`);
+    const changed = [frames, amount].filter(key => (values[key] ?? '') !== (project.get('General', key)?.value ?? ''));
+    if (changed.length) warnings.push(`将修改全局 [General] 的 ${changed.join('、')}，会影响所有玩家及使用该恢复机制的建筑。`);
+    if (!project.section('General')) warnings.push('当前未加载 [General]；全局恢复间隔和恢复量无法在此修改。');
+  }
   return warnings;
 }
 
@@ -291,7 +331,8 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
   if (!project.section(section)) throw new Error(`找不到规则段 [${section}]。`);
   const selected = {};
   for (const field of feature.fields) {
-    const existing = project.get(section, field.key);
+    const target = field.targetSection || section;
+    const existing = project.get(target, field.key);
     const raw = String(Object.prototype.hasOwnProperty.call(values || {}, field.key) ? (values[field.key] ?? '') : (existing?.value ?? '')).trim();
     if (!raw) {
       if (field.required) throw new Error(`请填写 ${field.key}。`);
@@ -299,7 +340,9 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
       selected[field.key] = '';
       continue;
     }
-    if ((field.type === 'integer' || field.type === 'signed') && !validInt(raw, field.type === 'signed') && raw !== existing?.value) {
+    if (field.targetSection && !project.section(target)) throw new Error(`未加载 [${target}]，无法修改 ${field.key}。`);
+    if ((field.type === 'integer' || field.type === 'signed' || field.type === 'positiveInteger') && (!validInt(raw, field.type === 'signed') || (field.type === 'positiveInteger' && Number(raw) === 0)) && raw !== existing?.value) {
+      if (field.type === 'positiveInteger') throw new Error(`${field.key} 需要填写 1 到 2147483647 之间的整数。`);
       throw new Error(`${field.key} 需要填写 ${field.type === 'signed' ? '-2147483648' : '0'} 到 2147483647 之间的整数。`);
     }
     if (field.type === 'multiplier' && !validMultiplier(raw) && raw !== existing?.value) throw new Error(`${field.key} 需要填写非负倍率或百分比，例如 1、0.5 或 50%。`);
@@ -324,17 +367,19 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
   const candidate = project.fork();
   const changes = [];
   for (const field of feature.fields) {
-    const value = selected[field.key], before = project.get(section, field.key);
+    const target = field.targetSection || section;
+    const value = selected[field.key], before = project.get(target, field.key);
+    const changeScope = field.targetSection ? { section: target, type: 'global' } : {};
     if ((!value && !before?.value) || (before && before.value === value)) continue;
     if (!value && field.allowClear) {
-      for (const removed of candidate.remove(section, field.key)) {
-        changes.push({ kind: 'remove', key: removed.key, before: removed.before, after: null, file: removed.file });
+      for (const removed of candidate.remove(target, field.key)) {
+        changes.push({ ...changeScope, kind: 'remove', key: removed.key, before: removed.before, after: null, file: removed.file });
       }
       continue;
     }
-    candidate.set(section, field.key, value);
-    const after = candidate.get(section, field.key);
-    changes.push({ key: field.key, before: before ? before.value : null, after: after?.value ?? '', file: after?.file || before?.file });
+    candidate.set(target, field.key, value);
+    const after = candidate.get(target, field.key);
+    changes.push({ ...changeScope, key: field.key, before: before ? before.value : null, after: after?.value ?? '', file: after?.file || before?.file });
   }
   return { feature, project: candidate, section, changes, warnings: warningsFor(project, section, type, feature, selected) };
 }

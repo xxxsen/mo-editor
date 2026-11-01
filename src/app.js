@@ -1284,10 +1284,10 @@ function quickChoiceText(kind, value) {
 }
 function quickFieldControl(field) {
   const value = String(field.value ?? ''), kind = quickChoiceKind(field.type);
-  const attr = `data-quick-field="${h(field.key)}" aria-label="${h(field.key)}"`;
+  const attr = `data-quick-field="${h(field.key)}" aria-label="${h(field.key)}"${field.unavailable ? ' disabled' : ''}`;
   if (kind) return `<input type="hidden" ${attr} value="${h(value)}"><button type="button" class="choice-trigger quick-choice" data-quick-choose="${h(field.key)}" data-quick-kind="${h(kind)}" aria-label="选择 ${h(field.key)}"><span>${h(quickChoiceText(kind, value))}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button><div class="quick-reference-info" data-quick-info="${h(field.key)}"></div>`;
   if (field.type === 'multiplier') return `<input ${attr} type="text" inputmode="decimal" value="${h(value)}" autocomplete="off" placeholder="例如 1、0.5 或 50%">`;
-  if (field.type === 'integer' || field.type === 'signed') return `<input ${attr} type="text" inputmode="${field.type === 'signed' ? 'text' : 'numeric'}" value="${h(value)}" autocomplete="off" placeholder="${field.required ? '请输入整数' : '留空不设置'}">`;
+  if (field.type === 'integer' || field.type === 'signed' || field.type === 'positiveInteger') return `<input ${attr} type="text" inputmode="${field.type === 'signed' ? 'text' : 'numeric'}" value="${h(value)}" autocomplete="off" placeholder="${field.unavailable ? '未加载全局配置' : field.required ? '请输入整数' : '留空不设置'}">`;
   let options;
   if (field.type === 'boolean') {
     const truthy = /^(yes|true|1)$/i.test(value), falsy = /^(no|false|0)$/i.test(value);
@@ -1331,10 +1331,13 @@ function openQuickFeature() {
   const split = value => String(value || '').split(',').map(item => item.trim()).filter(Boolean);
   const equalList = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
   function fieldSource(field) {
-    return field.current ? `已有值 · ${sourceName(field.current.file)}${field.current.line.patch !== undefined ? ' · 未保存' : ''}` : field.required ? '未配置 · 建议值' : `未配置 · ${field.defaultHint ? `${field.defaultHint} · ` : ''}留空不写入`;
+    if (field.unavailable) return `全局 [${field.targetSection}] 未加载 · 无法修改`;
+    const scope = field.targetSection ? `全局 [${field.targetSection}] · ` : '';
+    return scope + (field.current ? `已有值 · ${sourceName(field.current.file)}${field.current.line.patch !== undefined ? ' · 未保存' : ''}` : field.required ? '未配置 · 建议值' : `未配置 · ${field.defaultHint ? `${field.defaultHint} · ` : ''}留空不写入`);
   }
   function fieldMarkupQuick(field) {
-    const info = fieldInfoFor(entity, field.key), source = fieldSource(field), isChoice = !!quickChoiceKind(field.type);
+    const info = field.targetSection ? getFieldInfo(field.key, { type: 'global', section: field.targetSection }) : fieldInfoFor(entity, field.key);
+    const source = fieldSource(field), isChoice = !!quickChoiceKind(field.type);
     const element = isChoice ? 'div' : 'label';
     return `<${element} class="quick-field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.key)}${quickFieldControl(field)}<span class="quick-field-source" title="${h(source)}">${h(source)}</span>${field.warning ? `<span class="quick-field-risk">${h(field.warning)}</span>` : ''}</${element}>`;
   }
@@ -1483,7 +1486,7 @@ function openQuickFeature() {
       }
       const changes = plan.changes.length ? plan.changes.map(change => {
         const where = change.section || section;
-        const info = change.type === 'weapon' ? getFieldInfo(change.key, { type: 'weapon', section: where }) : fieldInfoFor(entity, change.key || '');
+        const info = change.type === 'weapon' ? getFieldInfo(change.key, { type: 'weapon', section: where }) : change.type === 'global' ? getFieldInfo(change.key, { type: 'global', section: where }) : fieldInfoFor(entity, change.key || '');
         const before = change.before === null ? '未配置' : change.before || '空值';
         const location = change.file ? `${sourceName(change.file)}${change.file.sourceArchive ? '（保存为独立 INI）' : ''}` : '';
         const label = change.kind === 'copy' ? `复制武器 [${h(change.before)}]` : fieldNameMarkup(info, change.key);

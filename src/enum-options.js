@@ -120,6 +120,7 @@ const houseFields = new Set(['sw.affectshouse', 'sw.requireshouse', 'sw.airequir
 
 export function enumKindForField(type, field) {
   const name = keyOf(field);
+  if (type === 'building' && (name === 'needsengineer' || name === 'unsellable')) return 'boolean';
   if ((units.has(type) && technoBooleans.has(name)) || (type === 'projectile' && projectileBooleans.has(name))
     || (type === 'superweapon' && superweaponBooleans.has(name)) || (type === 'weapon' && weaponBooleans.has(name))
     || (type === 'warhead' && warheadBooleans.has(name))) return 'boolean';

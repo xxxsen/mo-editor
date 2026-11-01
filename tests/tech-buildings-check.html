@@ -1,0 +1,68 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Tech building quick features</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 400; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[General]\nSelfHealInfantryFrames=100\nSelfHealInfantryAmount=20\nSelfHealUnitFrames=100\nSelfHealUnitAmount=10\n[BuildingTypes]\n0=CAOILD\n1=CATHOSP\n2=CAMACH\n[CAOILD]\nName=Oil Derrick\nProduceCashAmount=20\nProduceCashDelay=100\nProduceCashStartup=500\nCapturable=yes\nNeedsEngineer=yes\nUnsellable=yes\n[CATHOSP]\nName=Hospital\nInfantryGainSelfHeal=1\nCapturable=yes\nNeedsEngineer=yes\n[CAMACH]\nName=Machine Shop\nUnitsGainSelfHeal=1\nUnsellable=yes\n`;
+  async function load(text, id) {
+    const transfer = new w.DataTransfer(); transfer.items.add(new w.File([text], 'rulesmo.ini'));
+    const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await waitFor(() => d.querySelector(`[data-entity="${id}"]`), `fixture ${id} did not load`);
+  }
+  await load(main, 'CATHOSP');
+  const open = (id, featureId) => {
+    d.querySelector('[data-category="building"]').click(); d.querySelector(`[data-entity="${id}"]`).click();
+    d.querySelector('[data-action="quick-feature"]').click();
+    const dialog = d.querySelector('#editor-dialog'), select = dialog.querySelector('#quick-feature-type');
+    select.value = featureId; select.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check(select.value === featureId, `missing ${featureId}`); return dialog;
+  };
+  const field = (dialog, key) => dialog.querySelector(`[data-quick-field="${key}"]`);
+  const preview = dialog => dialog.querySelector('[data-quick-next]').click();
+  const apply = dialog => { preview(dialog); check(!dialog.querySelector('[data-quick-preview]').hidden, `preview failed: ${dialog.querySelector('[data-editor-error]')?.textContent}`); dialog.querySelector('[data-quick-apply]').click(); };
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+
+  let dialog = open('CATHOSP', 'tech-hospital');
+  check(field(dialog, 'InfantryGainSelfHeal').value === '1' && field(dialog, 'SelfHealInfantryFrames').value === '100' && field(dialog, 'SelfHealInfantryAmount').value === '20', 'hospital fields not prefilled');
+  check(dialog.textContent.includes('全局 [General]') && dialog.textContent.includes('影响所有玩家'), 'global scope not identified');
+  check(field(dialog, 'NeedsEngineer').value === 'yes' && field(dialog, 'Unsellable').value === '', 'capture values not prefilled');
+  field(dialog, 'InfantryGainSelfHeal').value = '2'; field(dialog, 'SelfHealInfantryFrames').value = '0';
+  preview(dialog); check(dialog.querySelector('[role="alert"]')?.textContent.includes('SelfHealInfantryFrames'), 'zero global interval accepted');
+  field(dialog, 'SelfHealInfantryFrames').value = '75'; field(dialog, 'SelfHealInfantryFrames').dispatchEvent(new w.Event('input', { bubbles: true }));
+  field(dialog, 'SelfHealInfantryAmount').value = '25';
+  const before = count(); preview(dialog);
+  check(count() === before && dialog.querySelector('[data-quick-preview]').textContent.includes('[General]') && dialog.textContent.includes('影响所有玩家'), 'global changes not isolated or warned in preview');
+  dialog.querySelector('[data-quick-back]').click(); check(field(dialog, 'SelfHealInfantryFrames').value === '75', 'global edit lost after preview');
+  apply(dialog); d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="InfantryGainSelfHeal"]').value === '2' && !d.querySelector('[data-field="SelfHealInfantryFrames"]'), 'hospital/global changes applied to wrong section');
+
+  dialog = open('CAMACH', 'tech-machine-shop');
+  check(field(dialog, 'UnitsGainSelfHeal').value === '1' && field(dialog, 'SelfHealUnitFrames').value === '100' && field(dialog, 'SelfHealUnitAmount').value === '10', 'machine shop fields not prefilled');
+  field(dialog, 'UnitsGainSelfHeal').value = '2'; preview(dialog);
+  check(!dialog.querySelector('[data-quick-preview]').textContent.includes('将修改全局'), 'unchanged global fields reported as changes');
+  dialog.querySelector('[data-quick-apply]').click();
+
+  dialog = open('CAOILD', 'income');
+  check(field(dialog, 'ProduceCashAmount').value === '20' && field(dialog, 'ProduceCashStartup').value === '500' && field(dialog, 'Capturable').value === 'yes', 'oil fields not prefilled');
+  field(dialog, 'ProduceCashAmount').value = '25'; apply(dialog);
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  for (const value of ['SelfHealInfantryFrames=75', 'SelfHealInfantryAmount=25', 'SelfHealUnitFrames=100', 'UnitsGainSelfHeal=2', 'InfantryGainSelfHeal=2', 'ProduceCashAmount=25', 'ProduceCashStartup=500']) check(saved.includes(value), `export missing ${value}`);
+  check(!saved.includes('Hospital=yes') && !saved.includes('UnitRepair=yes'), 'incorrect legacy building logic was written');
+
+  w.confirm = () => true; await load('[BuildingTypes]\n0=MISSING\n[MISSING]\nName=Missing General\n', 'MISSING');
+  dialog = open('MISSING', 'tech-hospital');
+  check(field(dialog, 'SelfHealInfantryFrames').disabled && field(dialog, 'SelfHealInfantryAmount').disabled && dialog.textContent.includes('未加载'), 'missing globals should be disabled');
+  check(field(dialog, 'InfantryGainSelfHeal').value === '1', 'hospital suggestion missing without General');
+  preview(dialog); check(!dialog.querySelector('[data-quick-preview]').hidden && dialog.textContent.includes('未加载 [General]'), 'missing globals blocked building-only preview');
+  result.textContent = 'PASS: tech oil, hospital and machine shop forms, global scope, validation, preview and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

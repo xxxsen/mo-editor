@@ -71,6 +71,8 @@ py -m http.server 4173 --bind 127.0.0.1
 
 载具运输使用 `Passengers`、`SizeLimit`、`PipScale`、`OpenTopped` 等字段；建筑驻军使用 `CanBeOccupied`、`MaxNumberOccupants`、`CanOccupyFire`。已有武器的建筑配置驻军时，表单和预览会提示建筑原有武器可能失效。初始乘员可逐项选择类型和数量，并按已配置的容量、体型等信息提示限制；不会自动改动其他运输或建筑字段。具体机制见 [Ares 乘员规则](https://ares-developers.github.io/Ares-docs/new/passengers.html)和[初始乘员与驻军](https://ares-developers.github.io/Ares-docs/new/initialpayload.html)。
 
+建筑快捷功能提供科技采油井式的定期收入、科技医院的所属方步兵自动治疗，以及科技机械商店的所属方单位自动维修；可选调整工程师占领及出售限制。医院和机械商店的恢复间隔、基础恢复量位于全局 `[General]`，表单会区分建筑与全局字段，修改全局字段时会在预览中提醒其影响所有玩家。如果没有加载 `[General]`，这些字段只显示为不可修改，仍可设置建筑自身的能力。
+
 「载具运输与车内开火」和独立的「乘员经验与晋升」均可配置载具的乘员经验规则：`Experience.FromPassengers` 控制载具是否获得乘员击杀经验；`Experience.PromotePassengers` 控制精英载具是否将后续击杀经验交给射击乘员；`Experience.PassengerModifier` 是乘员实际获得经验时的倍率，不是双方经验分配比例。`Promote.IncludePassengers` 在载具晋升时同步可升级乘员的等级，会覆盖乘员原有等级和经验，可能导致降级。表单展示 Ares 默认值，留空不会写入；载具和乘员自身的 `Trainable` 设置仍然生效。详见 [Ares 经验规则](https://ares-developers.github.io/Ares-docs/new/customizableveterancy.html)和[乘员等级同步](https://ares-developers.github.io/Ares-docs/new/promotion.html)。
 
 「乘员车内开火诊断」可从步兵或载具入口检查乘员普通、精英及编号武器的 `FireInTransport` 和已识别的使用者，并提示载具条件。可选择直接修改共享武器，或复制武器后只替换该乘员的相关武器槽；复制后的弹头、投射物及其他引用仍共享。实际开火仍受载具、目标和其他游戏规则影响。
@@ -114,7 +116,7 @@ py -m http.server 4173 --bind 127.0.0.1
 
 可添加字段目录由 `src/field-catalog.js` 汇总现有字段字典和当前项目的同类对象字段；编号类字段支持按规则手动输入，扩展装甲字段会根据当前项目生成。`tests/field-catalog-check.html` 覆盖缺失字段搜索、空白待编辑项、结构化选项和导出。
 
-快捷功能的适用类型、字段、建议值和预览校验集中维护在 `src/quick-features.js`。`tests/quick-features*.test.js`、`tests/quick-features*-check.html` 和 `tests/quick-default-reset-check.html` 覆盖字段预填、中文搜索、驻军武器提醒、乘员容量、共享武器复制、多文件恢复默认、预览取消及导出。
+快捷功能的适用类型、字段、建议值和预览校验集中维护在 `src/quick-features.js`。`tests/quick-features*.test.js`、`tests/quick-features*-check.html`、`tests/tech-buildings.test.js`、`tests/tech-buildings-check.html` 和 `tests/quick-default-reset-check.html` 覆盖字段预填、中文搜索、驻军武器提醒、科技建筑与全局自愈配置、乘员容量、共享武器复制、多文件恢复默认、预览取消及导出。
 
 ```sh
 npm test
