@@ -29,7 +29,14 @@ npm run desktop:build
 
 构建后生成免安装程序 `dist/MentalOmegaEditor.exe`；Tauri 原始输出位于 `src-tauri/target/release/mental-omega-editor.exe`。具体工具链要求见 [Tauri 文档](https://v2.tauri.app/start/prerequisites/)。
 
-开发构建使用固定文件名；正式发布时可由 GitLab CI 根据版本号命名产物。
+开发构建使用固定文件名。将包含发布工作流的提交推送到 GitHub 后，推送标签会触发 GitHub Actions：在 Windows 上运行测试、构建免安装版，并创建对应的 GitHub Release。例如：
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Release 附件名为 `MentalOmegaEditor-v1.0.0.exe`；文件名中的版本来自标签，不改变项目内部版本号。标签中不适合文件名的字符会替换为 `-`。工作流使用 GitHub 自动提供的令牌，需要仓库设置允许 Actions 创建 Release。
 
 ## 浏览器版启动
 
