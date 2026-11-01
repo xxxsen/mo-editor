@@ -6,6 +6,8 @@ import { MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creat
 // https://ares-developers.github.io/Ares-docs/new/initialpayload.html
 // https://ares-developers.github.io/Ares-docs/new/cloak/index.html
 // https://ares-developers.github.io/Ares-docs/new/buildings/producecash.html
+// https://ares-developers.github.io/Ares-docs/new/customizableveterancy.html
+// https://ares-developers.github.io/Ares-docs/new/promotion.html
 const mobile = ['infantry', 'vehicle', 'aircraft'];
 const technos = [...mobile, 'building'];
 const boolean = key => ({ key, type: 'boolean' });
@@ -14,19 +16,34 @@ const optionalInteger = key => ({ key, type: 'integer' });
 const optionalSigned = key => ({ key, type: 'signed' });
 const multiple = (key, type) => ({ key, type, allowClear: true });
 const reference = (key, type) => ({ key, type, allowClear: true });
+const passengerExperienceFields = () => [
+  defaultableBoolean('Trainable'),
+  { ...defaultableBoolean('Experience.FromPassengers'), defaultHint: 'Ares 默认：是' },
+  { ...defaultableBoolean('Experience.PromotePassengers'), defaultHint: 'Ares 默认：否' },
+  { key: 'Experience.PassengerModifier', type: 'multiplier', allowClear: true, defaultHint: 'Ares 默认：100%' },
+  { ...defaultableBoolean('Promote.IncludePassengers'), defaultHint: 'Ares 默认：否',
+    warning: '启用后，载具晋升时会覆盖可升级乘员的已有等级和经验，可能导致乘员降级。' },
+];
 
 export const QUICK_FEATURES = [
   {
     id: 'transport', label: '载具运输与车内开火', types: ['vehicle'],
-    description: '设置载具的乘员容量、体型限制和车内开火。乘员的 Size、武器及其他限制仍会影响实际效果。',
-    note: '已有的乘员允许／禁止名单、炮手等规则不会自动修改；预览会提示可能的限制。',
+    description: '设置载具的乘员容量、体型限制、车内开火及乘员击杀经验。乘员的 Size、武器及其他限制仍会影响实际效果。',
+    note: '经验相关字段配置在载具上，需要 Ares；乘员是否能晋升还取决于乘员自身的 Trainable。已有的允许／禁止名单等规则不会自动修改。',
     fields: [
       { key: 'Passengers', type: 'integer', suggested: '5', required: true },
       { key: 'SizeLimit', type: 'integer', suggested: '2', required: true },
       { key: 'PipScale', type: 'pipScale', suggested: 'Passengers', required: true },
       { key: 'OpenTopped', type: 'boolean', suggested: 'yes', required: true },
       boolean('NoManualEnter'), boolean('NoManualUnload'), boolean('Passengers.BySize'), boolean('Selectable'),
+      ...passengerExperienceFields(),
     ],
+  },
+  {
+    id: 'passenger-experience', label: '乘员经验与晋升', types: ['vehicle'],
+    description: '为载具设置乘员击杀时的经验归属，以及载具晋升时是否同步乘员等级。',
+    note: '需要 Ares；字段设置在载具上。默认载具获得乘员击杀经验，载具精英后不会转给射击乘员；经验倍率不是双方同时分配的比例。',
+    fields: passengerExperienceFields(),
   },
   {
     id: 'garrison', label: '建筑驻军', types: ['building'],
@@ -136,6 +153,8 @@ const disabled = value => /^(no|false|0)$/i.test(String(value ?? '').trim());
 const tokens = value => String(value ?? '').split(',').map(value => value.trim()).filter(Boolean);
 const validInt = (value, signed = false) => (signed ? /^[+-]?\d+$/ : /^\d+$/).test(value)
   && Number.isSafeInteger(Number(value)) && Number(value) <= 2147483647 && Number(value) >= (signed ? -2147483648 : 0);
+const validMultiplier = value => /^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?%?$/i.test(value)
+  && Number.isFinite(Number(value.replace(/%$/, '')));
 
 export function quickFeaturesFor(type) { return QUICK_FEATURES.filter(feature => feature.types.includes(type)); }
 
@@ -254,6 +273,14 @@ function warningsFor(project, section, type, feature, values) {
     }
     if (duplicated.size) warnings.push(`同一超级武器出现在多个位置：${[...duplicated].join('、')}；是否重复提供取决于游戏规则。`);
   }
+  if (feature.id === 'transport' || feature.id === 'passenger-experience') {
+    if (disabled(current('Trainable'))) warnings.push('Trainable 已关闭，载具无法通过经验晋升；乘员能否晋升还取决于其自身配置。');
+    if (disabled(current('Experience.FromPassengers'))) warnings.push('Experience.FromPassengers 已关闭，载具不会因乘员击杀获得经验；射击乘员的经验还取决于载具等级和炮手逻辑。');
+    if (enabled(current('Promote.IncludePassengers'))) warnings.push('Promote.IncludePassengers 会在载具晋升时覆盖所有可升级乘员的已有等级和经验，可能使原本更高等级的乘员降级；请谨慎用于可手动上下车的载具。');
+    if (feature.id === 'passenger-experience' && !enabled(current('OpenTopped')) && !enabled(current('Gunner'))) {
+      warnings.push('未检测到 OpenTopped=yes 或 Gunner=yes；乘员击杀经验归属需要相应的开放式载具或炮手逻辑。');
+    }
+  }
   return warnings;
 }
 
@@ -275,6 +302,7 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
     if ((field.type === 'integer' || field.type === 'signed') && !validInt(raw, field.type === 'signed') && raw !== existing?.value) {
       throw new Error(`${field.key} 需要填写 ${field.type === 'signed' ? '-2147483648' : '0'} 到 2147483647 之间的整数。`);
     }
+    if (field.type === 'multiplier' && !validMultiplier(raw) && raw !== existing?.value) throw new Error(`${field.key} 需要填写非负倍率或百分比，例如 1、0.5 或 50%。`);
     if (field.type === 'boolean' && !/^(yes|no|true|false|1|0)$/i.test(raw) && raw !== existing?.value) throw new Error(`${field.key} 需要选择“是”或“否”。`);
     if (field.type === 'pipScale' && !enumChoices('pipScale').some(item => normalize(item.id) === normalize(raw)) && raw !== existing?.value) throw new Error('PipScale 需要选择已知类型，或保留原有值。');
     if ((field.type === 'weapon' || field.type === 'superweapon') && raw !== existing?.value && !/^(none|<none>)$/i.test(raw) && !project.section(raw)) throw new Error(`找不到 ${field.key} 所选对象 [${raw}] 的定义。`);

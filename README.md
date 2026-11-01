@@ -71,6 +71,8 @@ py -m http.server 4173 --bind 127.0.0.1
 
 载具运输使用 `Passengers`、`SizeLimit`、`PipScale`、`OpenTopped` 等字段；建筑驻军使用 `CanBeOccupied`、`MaxNumberOccupants`、`CanOccupyFire`。已有武器的建筑配置驻军时，表单和预览会提示建筑原有武器可能失效。初始乘员可逐项选择类型和数量，并按已配置的容量、体型等信息提示限制；不会自动改动其他运输或建筑字段。具体机制见 [Ares 乘员规则](https://ares-developers.github.io/Ares-docs/new/passengers.html)和[初始乘员与驻军](https://ares-developers.github.io/Ares-docs/new/initialpayload.html)。
 
+「载具运输与车内开火」和独立的「乘员经验与晋升」均可配置载具的乘员经验规则：`Experience.FromPassengers` 控制载具是否获得乘员击杀经验；`Experience.PromotePassengers` 控制精英载具是否将后续击杀经验交给射击乘员；`Experience.PassengerModifier` 是乘员实际获得经验时的倍率，不是双方经验分配比例。`Promote.IncludePassengers` 在载具晋升时同步可升级乘员的等级，会覆盖乘员原有等级和经验，可能导致降级。表单展示 Ares 默认值，留空不会写入；载具和乘员自身的 `Trainable` 设置仍然生效。详见 [Ares 经验规则](https://ares-developers.github.io/Ares-docs/new/customizableveterancy.html)和[乘员等级同步](https://ares-developers.github.io/Ares-docs/new/promotion.html)。
+
 「乘员车内开火诊断」可从步兵或载具入口检查乘员普通、精英及编号武器的 `FireInTransport` 和已识别的使用者，并提示载具条件。可选择直接修改共享武器，或复制武器后只替换该乘员的相关武器槽；复制后的弹头、投射物及其他引用仍共享。实际开火仍受载具、目标和其他游戏规则影响。
 
 免疫项目支持保留或恢复游戏默认值。选择恢复默认或清空可选择字段时，会移除所有已加载文件中该规则段的同名定义，预览逐一列出这些变更；加载不完整时不能安全移除。地图、模式或未加载规则仍可能覆盖默认值。建筑自带隐形、建筑探测器、初始乘员及额外超级武器等功能需要对应 Ares 支持，不同类型的生效条件不同。
