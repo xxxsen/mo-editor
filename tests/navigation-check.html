@@ -8,6 +8,12 @@ async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if 
 frame.addEventListener('load', async () => {
  try {
   const w = frame.contentWindow, d = frame.contentDocument;
+  const sideButton = button => {
+    for (const type of ['mousedown', 'mouseup', 'auxclick']) {
+      const event = new w.MouseEvent(type, { button, bubbles: true, cancelable: true });
+      check(!d.body.dispatchEvent(event), `${type} did not suppress the browser side-button action`);
+    }
+  };
   const ids = ['VIRUS', 'SECOND', ...Array.from({ length: 55 }, (_, i) => `UNIT${i}`)];
   const fillerWarheads = Array.from({ length: 280 }, (_, i) => `${i + 1}=FILLER${i}\n`).join('');
   const rules = `[CombatDamage]\nIvanWarhead=VirusWH\n[Sides]\nAllied=AAA\n[Countries]\n0=AAA\n[AAA]\nName=Alpha\nSide=Allied\n[InfantryTypes]\n${ids.map((id, i) => `${i}=${id}\n`).join('')}[BuildingTypes]\n0=FAC\n[SuperWeaponTypes]\n0=SPECIAL\n[WeaponTypes]\n0=Virusgun\n1=OTHERGUN\n2=DEFAULTGUN\n[Warheads]\n0=VirusAttach\n${fillerWarheads}281=VirusWH\n282=OtherWH\n` +
@@ -38,17 +44,21 @@ frame.addEventListener('load', async () => {
   let field = d.querySelector('[data-field="CellSpread"]'); field.value = '2'; field.dispatchEvent(new w.Event('change', { bubbles: true }));
   d.querySelector('[data-action="show-referrers"]').click();
   check(d.querySelector('[data-jump="Virusgun"]') && d.querySelector('[data-jump="OTHERGUN"]') && d.querySelector('[data-jump="DEFAULTGUN"]'), 'warhead referrers missing');
-  d.querySelector('[data-action="nav-back"]').click();
+  sideButton(3);
   check(d.querySelector('.detail-name h2').textContent === '病毒枪' && d.querySelector('[data-tab="basic"]').getAttribute('aria-selected') === 'true', 'back did not return to weapon and tab');
-  d.querySelector('[data-action="nav-back"]').click();
+  sideButton(3);
   check(d.querySelector('.detail-name h2').textContent === '病毒狙击手', 'back did not return to infantry');
   check(d.querySelector('[data-tab="relations"]').getAttribute('aria-selected') === 'true', 'back did not restore the relations tab');
   check(d.querySelector('#search').value === '病毒' && d.querySelector('#owner-filter').value === 'AAA', 'back did not restore search and owner filter');
   check(d.querySelector('.unit-list').scrollTop === listPosition && d.querySelector('.detail-body').scrollTop === detailPosition, 'back did not restore scroll positions');
-  d.querySelector('[data-action="nav-forward"]').click(); d.querySelector('[data-action="nav-forward"]').click();
+  sideButton(4); sideButton(4);
   check(d.querySelector('.detail-name h2').textContent === 'VirusWH' && d.querySelector('[data-tab="relations"]').getAttribute('aria-selected') === 'true', 'forward did not restore warhead view');
   d.querySelector('[data-tab="basic"]').click();
   check(d.querySelector('[data-field="CellSpread"]').value === '2' && d.querySelector('[data-action="changes"] .badge-count').textContent === '1', 'navigation discarded the unsaved edit');
+  field = d.querySelector('[data-field="CellSpread"]'); field.focus(); field.select();
+  check(d.execCommand('insertText', false, '3') && field.value === '3', 'fixture could not type into the field');
+  sideButton(3); check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'side button did not navigate away from the active input');
+  sideButton(4); check(d.querySelector('[data-field="CellSpread"]').value === '3', 'side button discarded the active input edit');
   d.querySelector('[data-trail="0"]').click();
   check(d.querySelector('.detail-name h2').textContent === '病毒狙击手' && d.querySelector('#search').value === '病毒', 'path did not return to original context');
   d.querySelector('[data-action="nav-back"]').click();
@@ -63,6 +73,19 @@ frame.addEventListener('load', async () => {
   check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'Alt+Left did not go back');
   w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true }));
   check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'Alt+Right did not go forward');
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'BrowserBack', bubbles: true, cancelable: true }));
+  check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'BrowserBack key did not go back');
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'BrowserForward', bubbles: true, cancelable: true }));
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'BrowserForward key did not go forward');
+  d.querySelector('[data-action="changes"]').click(); sideButton(3);
+  check(d.querySelector('#changes-dialog').open && d.querySelector('.detail-name h2').textContent === 'OtherWH', 'side button navigated behind an open dialog');
+  const modalBack = new w.KeyboardEvent('keydown', { key: 'BrowserBack', bubbles: true, cancelable: true });
+  check(!w.dispatchEvent(modalBack) && d.querySelector('.detail-name h2').textContent === 'OtherWH', 'browser back key was not blocked behind an open dialog');
+  d.querySelector('#changes-dialog [data-close]').click();
+  for (const button of [0, 1, 2]) {
+    const event = new w.MouseEvent('mouseup', { button, bubbles: true, cancelable: true });
+    check(d.body.dispatchEvent(event) && d.querySelector('.detail-name h2').textContent === 'OtherWH', 'a standard mouse button was intercepted');
+  }
   d.querySelector('[data-category="weapon"]').click(); d.querySelector('[data-entity="DEFAULTGUN"]').click();
   check(d.querySelector('[data-field="IvanBomb.Warhead"]').value === '' && d.querySelector('[data-jump-field="IvanBomb.Warhead"]').textContent === '查看默认', 'global default link was not distinguished');
   d.querySelector('[data-jump-field="IvanBomb.Warhead"]').click();
@@ -80,6 +103,10 @@ frame.addEventListener('load', async () => {
   check(d.querySelector('[data-jump="SPECIAL"]'), 'superweapon warhead referrer was not shown');
   d.querySelector('[data-tab="basic"]').click(); field = d.querySelector('[data-field="CellSpread"]'); field.focus();
   field.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true }));
+  sideButton(3);
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'side button navigated during IME composition');
+  const composingBack = new w.KeyboardEvent('keydown', { key: 'BrowserBack', bubbles: true, cancelable: true });
+  check(!w.dispatchEvent(composingBack) && d.querySelector('.detail-name h2').textContent === 'OtherWH', 'browser back key was not blocked during IME composition');
   w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true }));
   check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'shortcut navigated during IME composition');
   field.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true }));
@@ -90,7 +117,7 @@ frame.addEventListener('load', async () => {
   input.files = nextTransfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'new project did not load');
   check(d.querySelector('[data-action="nav-back"]').disabled && !d.querySelector('.navigation-trail'), 'new project retained navigation from the previous project');
-  result.textContent = 'PASS: navigation history, visit path, search/filter/scroll restoration, unsaved edits, shared users, direct links and shortcuts';
+  result.textContent = 'PASS: navigation history, visit path, restored context, unsaved edits, shared users, mouse buttons and keyboard shortcuts';
  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
 });
 </script></body></html>

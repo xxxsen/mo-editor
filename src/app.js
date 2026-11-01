@@ -245,7 +245,7 @@ function initializeNavigation() {
   updateNavigationControls();
 }
 function updateNavigationControls() {
-  for (const [action, offset, label, shortcut] of [['nav-back', -1, '返回', 'Alt+←'], ['nav-forward', 1, '前进', 'Alt+→']]) {
+  for (const [action, offset, label, shortcut] of [['nav-back', -1, '返回', 'Alt+← / 鼠标后退键'], ['nav-forward', 1, '前进', 'Alt+→ / 鼠标前进键']]) {
     const button = app.querySelector(`[data-action="${action}"]`);
     if (!button) continue;
     const entry = navigation.entries[navigation.index + offset];
@@ -793,11 +793,31 @@ window.addEventListener('beforeunload', event => {
     event.returnValue = '';
   }
 });
-window.addEventListener('keydown', event => {
-  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(event.key) || composing || event.isComposing || app.inert || dialog.open || editorDialog.open) return;
-  event.preventDefault();
+function navigateByShortcut(offset) {
+  if (composing || app.inert || dialog.open || editorDialog.open || !navigation.entries[navigation.index + offset]) return;
+  // Side buttons do not normally move focus, so commit an active input before leaving.
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  moveNavigation(event.key === 'ArrowLeft' ? -1 : 1);
+  moveNavigation(offset);
+}
+const mouseNavigationOffset = button => button === 3 ? -1 : button === 4 ? 1 : 0;
+window.addEventListener('mousedown', event => {
+  if (mouseNavigationOffset(event.button)) event.preventDefault();
+}, true);
+window.addEventListener('mouseup', event => {
+  const offset = mouseNavigationOffset(event.button);
+  if (!offset) return;
+  event.preventDefault();
+  navigateByShortcut(offset);
+}, true);
+window.addEventListener('auxclick', event => {
+  if (mouseNavigationOffset(event.button)) event.preventDefault();
+}, true);
+window.addEventListener('keydown', event => {
+  const arrow = event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && ['ArrowLeft', 'ArrowRight'].includes(event.key);
+  const browserKey = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && ['BrowserBack', 'BrowserForward'].includes(event.key);
+  if (!arrow && !browserKey) return;
+  event.preventDefault();
+  if (!event.repeat && !event.isComposing) navigateByShortcut(event.key === 'ArrowLeft' || event.key === 'BrowserBack' ? -1 : 1);
 });
 
 function commitField(section, key, value) {
