@@ -135,12 +135,16 @@ frame.addEventListener('load', async () => {
   } catch (error) {
     throw new Error(`${error.message}: files=${[...packed.keys()].join(',')} cost=${d.querySelector('[data-field="Cost"]')?.value} toast=${d.querySelector('#toast').textContent}`);
   }
-  d.querySelector('[data-action="choose-options"][data-key="EliteAbilities"]').click();
+  d.querySelector('[data-tab="raw"]').click(); d.querySelector('[data-action="add-field"]').click();
+  editor = d.querySelector('#editor-dialog'); editor.querySelector('#new-field-name').value = 'Sensors'; editor.querySelector('[data-editor-apply]').click(); await delay(30);
+  check(d.querySelector('[data-field="Sensors"]')?.value === '' && d.querySelector('[data-action="changes"] .badge-count').textContent === '0', 'empty desktop field was treated as a change');
+  d.querySelector('[data-tab="basic"]').click(); d.querySelector('[data-action="choose-options"][data-key="EliteAbilities"]').click();
   editor = d.querySelector('#editor-dialog');
   const ability = editor.querySelector('[data-choice="EMPIMMUNE"]'); check(ability, 'desktop ability chooser missing');
   ability.checked = true; ability.dispatchEvent(new w.Event('change', { bubbles: true })); editor.querySelector('[data-editor-apply]').click(); await delay(30);
   d.querySelector('[data-action="save"]').click();
   await waitFor(() => packed.has('units.ini') && decoder.decode(packed.get('units.ini')).includes('EliteAbilities=EMPIMMUNE') && !d.querySelector('#app').inert, 'desktop ability selection did not save');
+  check(!decoder.decode(packed.get('units.ini')).includes('Sensors='), 'unfilled field was written during desktop save');
   d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'ability save backup missing');
   d.querySelector('[data-restore="0"]').click();
   await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && !d.querySelector('#app').inert, 'restoring ability save did not restore MIX source');

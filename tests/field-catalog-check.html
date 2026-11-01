@@ -1,0 +1,92 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Missing field catalog check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const rules = `[General]\nName=Fixture\n[Countries]\n0=USA\n[USA]\nName=测试国家\n[InfantryTypes]\n0=UNIT\n1=OTHER\n[Projectiles]\n0=PROJ\n[Warheads]\n0=WH\n[ArmorTypes]\nshielded=heavy\n[UNIT]\nName=测试步兵\nStrength=100 ; keep\n[OTHER]\nName=其他步兵\nImmuneToEMP=no\nCustom.UnitFlag=yes\n[PROJ]\nInviso=yes\n[WH]\nVerses=100%\n`;
+  await waitFor(() => d.querySelector('.detail-name'), 'editor did not start');
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name p')?.textContent.includes('[UNIT]'), 'fixture did not load');
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  const add = () => { d.querySelector('[data-action="add-field"]').click(); return d.querySelector('#editor-dialog'); };
+  const search = (dialog, value) => { const input = dialog.querySelector('#new-field-search'); input.value = value; input.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const candidate = (dialog, key) => { const item = dialog.querySelector(`[data-field-candidate="${key}"]`); check(item, `missing candidate ${key}`); item.click(); };
+  d.querySelector('[data-tab="raw"]').click();
+  let dialog = add();
+  const searchInput = dialog.querySelector('#new-field-search');
+  searchInput.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: 'mian' }));
+  search(dialog, '免疫 EMP');
+  searchInput.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '免疫 EMP' }));
+  check(searchInput.isConnected && dialog.querySelector('[data-field-candidate="ImmuneToEMP"]'), 'Chinese search or IME was interrupted');
+  check(dialog.textContent.includes('同类对象已使用'), 'same-type source was not identified');
+  candidate(dialog, 'ImmuneToEMP');
+  check(dialog.querySelector('[data-field-info]').textContent.includes('免疫 EMP'), 'selected field description missing');
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="ImmuneToEMP"]')?.value === '' && count() === 0, 'empty pending field changed the project');
+  check(d.querySelector('[data-action="choose-options"][data-key="ImmuneToEMP"]'), 'pending field has no structured editor');
+  d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="OTHER"][data-type="infantry"]').click();
+  d.querySelector('[data-entity="UNIT"][data-type="infantry"]').click(); d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="ImmuneToEMP"]')?.value === '' && count() === 0, 'navigation lost the pending field or created a change');
+  dialog = add(); search(dialog, 'ImmuneToEMP'); check(!dialog.querySelector('[data-field-candidate="ImmuneToEMP"]'), 'pending field can be duplicated from catalog');
+  dialog.querySelector('#new-field-name').value = 'immunetoemp'; dialog.querySelector('[data-editor-apply]').click();
+  check(dialog.querySelector('[data-editor-error]')?.textContent.includes('待编辑'), 'pending duplicate not rejected');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-action="choose-options"][data-key="ImmuneToEMP"]').click(); dialog = d.querySelector('#editor-dialog');
+  const yes = dialog.querySelector('[data-choice="yes"]'); yes.checked = true; yes.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="ImmuneToEMP"]').value === 'yes' && count() === 1, 'setting the pending value did not create a change');
+  let field = d.querySelector('[data-field="ImmuneToEMP"]'); field.value = ''; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  check(d.querySelector('[data-field="ImmuneToEMP"]')?.value === '' && count() === 0, 'clearing a newly added value did not restore the pending field');
+  d.querySelector('[data-action="remove-pending-field"][data-key="ImmuneToEMP"]').click();
+  check(!d.querySelector('[data-field="ImmuneToEMP"]') && count() === 0, 'removing pending row changed data');
+  dialog = add(); search(dialog, 'Owner'); candidate(dialog, 'Owner'); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  d.querySelector('[data-action="choose-options"][data-kind="country"][data-key="Owner"]').click(); dialog = d.querySelector('#editor-dialog');
+  let option = dialog.querySelector('[data-choice="USA"]'); check(option, 'pending owner has no country choices');
+  option.checked = true; option.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Owner"]').value === 'USA', 'pending owner chooser did not set the value');
+  dialog = add(); search(dialog, 'Armor'); candidate(dialog, 'Armor'); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  d.querySelector('[data-action="choose-options"][data-kind="armor"][data-key="Armor"]').click(); dialog = d.querySelector('#editor-dialog');
+  option = dialog.querySelector('[data-choice="heavy"]'); check(option, 'pending armor has no armor choices');
+  option.checked = true; option.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Armor"]').value === 'heavy', 'pending armor chooser did not set the value');
+  dialog = add(); search(dialog, 'Custom.UnitFlag'); candidate(dialog, 'Custom.UnitFlag');
+  check(dialog.querySelector('[data-field-info]').textContent.includes('尚未收录'), 'unconfirmed field was presented as known');
+  dialog.querySelector('#new-field-value').value = 'no'; dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Custom.UnitFlag"]').value === 'no' && count() === 3, 'same-type unknown field could not be added');
+  dialog = add(); search(dialog, 'Power'); check(dialog.textContent.includes('适用类型待确认'), 'mixed unit fields were not qualified');
+  dialog.querySelector('#new-field-name').value = 'My.Custom.Field'; dialog.querySelector('#new-field-value').value = '42'; dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="My.Custom.Field"]').value === '42', 'custom field was not added');
+  d.querySelector('[data-category="projectile"]').click(); d.querySelector('[data-entity="PROJ"][data-type="projectile"]').click(); d.querySelector('[data-tab="raw"]').click();
+  dialog = add(); search(dialog, '抛物线'); candidate(dialog, 'Arcing'); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Arcing"]') && d.querySelector('[data-action="choose-options"][data-key="Arcing"]'), 'projectile pending field is not editable');
+  d.querySelector('[data-action="choose-options"][data-key="Arcing"]').click(); dialog = d.querySelector('#editor-dialog');
+  const value = dialog.querySelector('[data-choice="yes"]'); value.checked = true; value.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Arcing"]').value === 'yes', 'projectile option was not saved');
+  d.querySelector('[data-category="warhead"]').click(); d.querySelector('[data-entity="WH"][data-type="warhead"]').click(); d.querySelector('[data-tab="raw"]').click();
+  dialog = add(); search(dialog, 'Versus.shielded'); check(dialog.querySelector('[data-field-candidate="Versus.shielded"]'), 'dynamic armor field missing'); dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-category="global"]').click();
+  dialog = add(); search(dialog, 'BuildSpeed'); candidate(dialog, 'BuildSpeed'); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="BuildSpeed"]')?.value === '' && d.querySelector('[data-action="remove-pending-field"][data-key="BuildSpeed"]'), 'global pending field missing');
+  field = d.querySelector('[data-field="BuildSpeed"]'); field.value = '.75'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-category="sections"]').click();
+  const librarySearch = d.querySelector('#search'); librarySearch.value = 'UNIT'; librarySearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-entity="UNIT"][data-type="sections"]').click();
+  dialog = add(); search(dialog, 'Cloakable'); candidate(dialog, 'Cloakable'); dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  field = d.querySelector('[data-field="Cloakable"]'); check(field?.value === '', 'typed object in all-sections view lost its pending field');
+  field.value = 'yes'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  for (const text of ['Strength=100 ; keep', 'Owner=USA', 'Armor=heavy', 'Custom.UnitFlag=no', 'My.Custom.Field=42', 'Arcing=yes', 'BuildSpeed=.75', 'Cloakable=yes']) check(saved.includes(text), `export lost ${text}`);
+  check(!saved.includes('ImmuneToEMP=' + 'yes'), 'removed pending value was written');
+  result.textContent = 'PASS: searchable missing fields, empty drafts, typed choices, same-type suggestions, custom fields and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

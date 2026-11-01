@@ -3,6 +3,7 @@ import { DEMO_MAIN, DEMO_UNITS } from './demo.js';
 import { GameResources } from './resources.js';
 import { STANDARD_ARMORS, GLOBAL_SECTIONS, globalFieldInfo, countriesFor, sidesFor, armorsFor, prerequisitesFor, mergeSelections, updateVerses } from './rule-schema.js';
 import { getFieldInfo } from './field-metadata.js';
+import { availableFields } from './field-catalog.js';
 import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
@@ -16,7 +17,7 @@ const folderInput = document.querySelector('#folder-input');
 const dialog = document.querySelector('#changes-dialog');
 const editorDialog = document.querySelector('#editor-dialog');
 const toast = document.querySelector('#toast');
-const state = { project: null, resources: null, desktopSession: null, demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
+const state = { project: null, resources: null, desktopSession: null, demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), pendingFields: new Map(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
 const navigation = { entries: [], index: -1, trail: [] };
 let pointerDown = false;
 let renderPending = false;
@@ -461,12 +462,25 @@ const warheadBasic = ['CellSpread', 'PercentAtMax', 'InfDeath'];
 const superweaponBasic = ['Type', 'RechargeTime', 'Action', 'Money.Amount', 'IsPowered', 'ShowTimer', 'DisableableFromShell', 'SW.InitialReady', 'SW.AutoFire', 'SW.FireIntoShroud'];
 const superweaponEffects = ['SW.Range', 'SW.Damage', 'SW.Warhead', 'SW.Deferment', 'SW.RangeMinimum', 'SW.RangeMaximum', 'SW.AffectsHouse', 'SW.AffectsTarget', 'SW.AITargeting', 'SW.RequiredHouses', 'SW.ForbiddenHouses'];
 
+function actualEntity(entity) {
+  return entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
+}
 function fieldInfoFor(entity, key) {
-  let target = entity;
-  if (entity.type === 'sections') {
-    target = state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity;
-  }
+  const target = actualEntity(entity);
   return getFieldInfo(key, { type: target.type, section: entity.id, globalKind: target.globalKind });
+}
+function pendingFields(section) {
+  return [...(state.pendingFields.get(lower(section))?.values() || [])].filter(name => !state.project.get(section, name));
+}
+function addPendingField(section, key) {
+  const name = lower(section);
+  if (!state.pendingFields.has(name)) state.pendingFields.set(name, new Map());
+  state.pendingFields.get(name).set(lower(key), key);
+}
+function removePendingField(section, key) {
+  const fields = state.pendingFields.get(lower(section));
+  fields?.delete(lower(key));
+  if (!fields?.size) state.pendingFields.delete(lower(section));
 }
 
 function fieldNameMarkup(info, key, className = 'field-label', extraTitle = '') {
@@ -556,14 +570,21 @@ function referenceChoiceMarkup(entity, key) {
 }
 
 function enumKindFor(entity, key) {
-  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  const actual = actualEntity(entity);
   return enumKindForField(actual?.type, key);
 }
 
-function enumChoiceMarkup(entity, key) {
-  const kind = enumKindFor(entity, key);
+function structuredChoiceMarkup(entity, key) {
+  const actual = actualEntity(entity), name = lower(key);
+  let kind = enumKindFor(entity, key);
+  if (!kind && unitTypes.has(actual.type) && name === 'armor') kind = 'armor';
+  else if (!kind && unitTypes.has(actual.type) && /^(superweapon|superweapon2|superweapons)$/.test(name)) kind = name === 'superweapons' ? 'superweapons' : 'superweapon';
+  else if (!kind && actual.type === 'global' && actual.globalKind === 'country' && name === 'side') kind = 'side';
+  else if (!kind && ((unitTypes.has(actual.type) && /^(owner|requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'superweapon' && /^sw\.(requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'global' && lower(actual.id) === 'sides'))) kind = 'country';
+  else if (!kind && unitTypes.has(actual.type) && name === 'prerequisite') kind = 'prerequisite';
   if (!kind) return '';
-  return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="${h(enumDefinition(kind).title)}">选择</button>`;
+  const title = enumDefinition(kind)?.title || `选择${fieldInfoFor(entity, key).label}`;
+  return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="${h(title)}">选择</button>`;
 }
 
 function fieldReferenceMarkup(entity, key, value) {
@@ -595,13 +616,13 @@ function fieldMarkup(entity, key) {
     const canUnset = !raw || ((projectileBoolean || enumKind === 'boolean') && field?.line.added);
     control = `<select class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}>${canUnset ? `<option value="" ${raw ? '' : 'selected'}>未定义</option>` : ''}<option value="${h(yes)}" ${raw && truthy ? 'selected' : ''}>是</option><option value="${h(no)}" ${raw && !truthy ? 'selected' : ''}>否</option></select>`;
   } else {
-    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${enumChoiceMarkup(entity, key)}${referenceChoiceMarkup(entity, key)}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
+    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${structuredChoiceMarkup(entity, key)}${referenceChoiceMarkup(entity, key)}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
   }
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
 
 function renderGlobal(entity) {
-  const fields = [...state.project.section(entity.id).fields.values()];
+  const fields = [...state.project.section(entity.id).fields.values(), ...pendingFields(entity.id).map(name => ({ name, value: '', pending: true }))];
   const infoFor = field => fieldInfoFor(entity, field.name);
   const common = fields.filter(field => infoFor(field).known);
   const other = fields.filter(field => !infoFor(field).known);
@@ -609,7 +630,7 @@ function renderGlobal(entity) {
   const row = field => {
     const info = infoFor(field);
     const search = lower([info.label, field.name, field.value, ...info.aliases].join(' '));
-    return `<div data-global-row data-search-text="${h(search)}" ${q && !search.includes(q) ? 'hidden' : ''}>${fieldMarkup(entity, field.name)}${info.inlineHint ? `<p class="global-field-hint">${h(info.description)}</p>` : ''}</div>`;
+    return `<div data-global-row data-search-text="${h(search)}" ${q && !search.includes(q) ? 'hidden' : ''}>${fieldMarkup(entity, field.name)}${field.pending ? `<button type="button" class="pending-field-remove" data-action="remove-pending-field" data-key="${h(field.name)}">移除未设置项</button>` : ''}${info.inlineHint ? `<p class="global-field-hint">${h(info.description)}</p>` : ''}</div>`;
   };
   const hint = lower(entity.id) === 'multiplayerdialogsettings' ? '游戏模式或启动器可能覆盖这些默认值。' : '显示当前规则段中的全部已定义参数。';
   return `<div class="detail-top"><div class="detail-kicker">${entity.type === 'global' ? 'GLOBAL SETTINGS' : 'RULE SECTION'} <span>/</span> ${h(entity.id.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon">${icon('global', 32)}</div><div class="detail-name"><h2>${h(entity.name)}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${fields.length} 个参数</p></div><div class="hero-actions">${entity.type === 'sections' ? '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${state.changedSections.has(lower(entity.id)) ? '● 有修改' : '● 已解析'}</div></div></div></div><div class="detail-body"><div class="section-head"><div><h3>${h(entity.description || '全局规则')}</h3><p>${h(hint)}</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="search-wrap global-search-wrap">${icon('search', 15)}<input class="search" id="global-search" type="search" value="${h(state.globalSearch)}" placeholder="在此设置中搜索名称、字段或值..." aria-label="搜索全局参数"></div>${common.length ? `<div class="global-group-title">常用设置 <span>${common.length}</span></div><div class="field-grid global-grid">${common.map(row).join('')}</div>` : ''}<div class="global-group-title">${common.length ? '其他参数' : '全部参数'} <span>${other.length}</span></div><div class="field-grid global-grid">${other.map(row).join('')}</div></div>`;
@@ -762,10 +783,10 @@ function renderRelations(entity) {
   return `<div class="detail-body"><div class="section-head"><div><h3>关联关系</h3><p>${h(description)}</p></div><span class="section-num">REFERENCES</span></div><div class="refs">${items}</div></div>`;
 }
 function renderRaw(entity) {
-  const fields = [...state.project.section(entity.id).fields.values()];
+  const fields = [...state.project.section(entity.id).fields.values(), ...pendingFields(entity.id).map(name => ({ name, value: '', pending: true }))];
   return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
-    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${enumChoiceMarkup(entity, field.name)}${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
+    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', field.pending ? '未配置，填写后加入待保存修改' : `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line?.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" ${field.pending ? 'placeholder="未配置"' : ''} autocomplete="off" spellcheck="false">${structuredChoiceMarkup(entity, field.name)}${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}${field.pending ? `<button type="button" class="split-button" data-action="remove-pending-field" data-key="${h(field.name)}" aria-label="移除未设置的 ${h(info.label)}">移除</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -982,6 +1003,8 @@ app.addEventListener('click', event => {
     openListEditor(button.dataset.key);
   } else if (button.dataset.action === 'add-field') {
     openAddField();
+  } else if (button.dataset.action === 'remove-pending-field') {
+    removePendingField(state.selected, button.dataset.key); render();
   } else if (button.dataset.action === 'create-object') {
     openCreateObject(false);
   } else if (button.dataset.action === 'clone-object') {
@@ -1095,6 +1118,7 @@ async function loadFiles(list, { nativeSession = null, skipConfirm = false } = {
     }
     if (sequence !== importSequence) return false;
     state.project = project;
+    state.pendingFields.clear();
     state.resources = resources;
     state.desktopSession = nativeSession;
     state.demo = false; state.category = 'all'; state.search = ''; state.owner = ''; state.tab = 'basic'; state.listLimit = 250;
@@ -1375,6 +1399,7 @@ function openMainFilePicker() {
     editorDialog.close();
     if (file.path === current) return;
     state.project.mainPath = file.path;
+    state.pendingFields.clear();
     state.listLimit = 250;
     state.project.rebuild();
     chooseInitial();
@@ -1495,18 +1520,74 @@ function openListEditor(key) {
 
 function openAddField() {
   const section = state.selected;
-  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">添加规则字段</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>字段将添加到当前规则段 [${h(section)}]；请使用规则支持的字段名和值。</p><div class="editor-fields"><label>字段名<input id="new-field-name" placeholder="例如 BuildSpeed" autocomplete="off" spellcheck="false"></label><label>值<input id="new-field-value" placeholder="输入规则值" autocomplete="off" spellcheck="false"></label></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>添加字段</button></div>`;
+  const project = state.project;
+  const selected = entityFor(section, state.selectedType) || entityFor(section);
+  const target = selected && actualEntity(selected);
+  const fields = target ? availableFields(project, target, state.entities, pendingFields(section)) : [];
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">添加规则字段</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>从已收录字段和同类对象中查找，效果还取决于对象和扩展版本。值留空时仅加入待编辑列表，不写入规则文件。</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="new-field-search" type="search" placeholder="搜索中文名称或字段代码..." aria-label="搜索可添加字段"></div><div class="field-catalog-list" data-field-catalog></div><div class="editor-fields"><label>字段名<input id="new-field-name" placeholder="例如 ImmuneToEMP" autocomplete="off" spellcheck="false"></label><p class="field-catalog-info" data-field-info></p><label>值（可稍后填写）<input id="new-field-value" placeholder="未配置" autocomplete="off" spellcheck="false"></label></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>添加字段</button></div>`;
+  const search = editorDialog.querySelector('#new-field-search');
+  const list = editorDialog.querySelector('[data-field-catalog]');
+  const nameInput = editorDialog.querySelector('#new-field-name');
+  const valueInput = editorDialog.querySelector('#new-field-value');
+  const infoLabel = editorDialog.querySelector('[data-field-info]');
+  function drawCatalog() {
+    const query = lower(search.value.trim());
+    const matches = fields.filter(item => !query || lower([item.name, item.label, item.description, item.group, ...item.aliases].join(' ')).includes(query));
+    const shown = matches.slice(0, 120);
+    let lastGroup = '';
+    list.innerHTML = shown.map(item => {
+      const heading = item.group !== lastGroup ? `<div class="field-catalog-group">${h(item.group)}</div>` : '';
+      lastGroup = item.group;
+      return `${heading}<button type="button" class="field-candidate" data-field-candidate="${h(item.name)}"${item.description ? ` title="${h(item.description)}"` : ''}><span><strong>${h(item.label)}</strong><small>${h(item.name)}</small></span>${icon('chevron', 13)}</button>`;
+    }).join('') || '<div class="field-catalog-empty">没有匹配字段；可以在下方手动输入。</div>';
+    if (matches.length > shown.length) list.insertAdjacentHTML('beforeend', `<p class="option-limit">显示前 ${shown.length} 项，请搜索中文或代码缩小范围。</p>`);
+  }
+  function describeName() {
+    const key = nameInput.value.trim();
+    if (!key) { infoLabel.textContent = '选择目录中的字段，或输入自定义字段名。'; return; }
+    const info = selected ? fieldInfoFor(selected, key) : { known: false };
+    infoLabel.textContent = info.known ? `${info.label} / ${key}：${info.description}` : '该字段尚未收录说明；请确认名称与对象类型适用。';
+  }
+  search.addEventListener('input', drawCatalog);
+  nameInput.addEventListener('input', describeName);
+  list.addEventListener('click', event => {
+    const button = event.target.closest('[data-field-candidate]');
+    if (!button) return;
+    nameInput.value = button.dataset.fieldCandidate;
+    describeName();
+    valueInput.focus({ preventScroll: true });
+  });
   editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
   editorDialog.querySelector('[data-editor-apply]').addEventListener('click', () => {
-    const key = editorDialog.querySelector('#new-field-name').value.trim();
-    const value = editorDialog.querySelector('#new-field-value').value.trim();
-    if (!key || !value) { showEditorError('请输入字段名和值。'); return; }
+    const key = nameInput.value.trim();
+    const value = valueInput.value.trim();
+    if (state.project !== project || state.selected !== section) { showEditorError('当前项目已改变，请重新打开字段目录。'); return; }
+    if (!key) { showEditorError('请输入字段名。'); return; }
+    if (!/^[A-Za-z0-9_.$-]+$/.test(key)) { showEditorError('属性名包含不支持的字符。'); return; }
     if (state.project.get(section, key)) { showEditorError('该字段已存在，请直接编辑原有字段。'); return; }
-    try { commitField(section, key, value); editorDialog.close(); }
+    if (pendingFields(section).some(name => lower(name) === lower(key))) { showEditorError('该字段已在待编辑列表中。'); return; }
+    try {
+      if (value) commitField(section, key, value);
+      else addPendingField(section, key);
+      state.globalSearch = '';
+      editorDialog.close();
+      if (!value) render();
+      setTimeout(() => {
+        const field = app.querySelector(`[data-field="${CSS.escape(key)}"]`) || app.querySelector(`[data-action="choose-options"][data-key="${CSS.escape(key)}"]`);
+        const detail = app.querySelector('.detail-body'), row = field?.closest('.raw-row, [data-global-row]');
+        if (detail && row) {
+          const container = detail.getBoundingClientRect(), rect = row.getBoundingClientRect();
+          if (rect.top < container.top) detail.scrollTop += rect.top - container.top;
+          else if (rect.bottom > container.bottom) detail.scrollTop += rect.bottom - container.bottom;
+        }
+        field?.focus({ preventScroll: true });
+      }, 0);
+    }
     catch (error) { showEditorError(error.message); }
   });
+  drawCatalog(); describeName();
   editorDialog.showModal();
-  editorDialog.querySelector('#new-field-name').focus({ preventScroll: true });
+  search.focus({ preventScroll: true });
 }
 
 function showChanges() {
