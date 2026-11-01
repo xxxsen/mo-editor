@@ -63,6 +63,10 @@ py -m http.server 4173 --bind 127.0.0.1
 5. 「超级武器」读取 `[SuperWeaponTypes]` 中的注册项，支持修改充能、费用、效果与限制等参数；建筑和其他提供对象中的超级武器可通过选择器调整，关联关系可双向查看。未定义的参数显示为空，具体默认值和效果取决于武器类型及游戏引擎。
 6. 桌面版点击「保存」写回并备份；也可以点击「另存为」输出到其他目录。浏览器版通过「查看修改」逐个下载已修改的文件，再根据路径提示自行放置。
 
+对象列表的「新增」和对象详情的「复制并新建」支持步兵、载具、飞机、建筑、武器、投射物、弹头、超级武器及普通规则段。可搜索模板或空白创建，预览规则段、类型登记及保留的引用后加入当前修改；还需点击「保存」才会写入文件。游戏对象的 ID 限制为 24 个字符，建议 ID 会自动缩短；普通规则段不受此限制。类型登记追加到已有列表末尾；没有对应列表时会创建列表。对于投射物，该列表用于编辑器管理，游戏效果仍需武器引用。
+
+复制只创建所选对象，武器、弹头、投射物及其他引用默认继续共享。可以逐个复制这些关联对象，再通过字段旁的「选择」替换引用；复制前已编辑但未保存的值也会保留。复制单位时，未指定 `Image` 会自动复用模板图像；`UIName` 沿用模板，不会创建新的中文字符串或美术资源。空白对象需自行补充游戏需要的属性，单位能否建造和超级武器能否使用还取决于相应规则。
+
 从武器、弹头或超级武器字段的「查看」进入关联对象后，左侧列表会定位到该对象。可使用顶部的返回、前进按钮、鼠标侧键或 `Alt+←` / `Alt+→`，也可点击详情顶部的访问路径。返回会恢复当时的搜索、筛选、页签和滚动位置，并保留未保存的规则修改。切换项目或主文件后，浏览记录会清空；桌面版的「历史版本」是文件备份，与浏览记录分开。
 
 武器和弹头的基础属性页显示根据已加载规则识别出的引用数量，点击「查看引用」可列出使用者；特殊规则和未加载的文件可能包含其他引用。字段旁的「查看」打开目标规则段，直接编辑字段值则会更改引用。全局默认的炸弹弹头标为「查看默认」，查看时不会写入覆盖值。
@@ -96,4 +100,4 @@ npm test
 
 浏览器端的导入、编辑、关联与导出检查位于 `tests/browser-check.html`；长列表滚动、焦点及连续操作检查位于 `tests/scroll-check.html`；资源解析和图标显示检查位于 `tests/resource-check.html`；规则来源优先级检查位于 `tests/rules-source-check.html`；全局配置、结构化字段和固定高度检查位于 `tests/structured-check.html`；跨规则段搜索检查位于 `tests/global-search-check.html`；中文输入及超级武器检查位于 `tests/superweapon-ime-check.html`；字段中文名及说明检查位于 `tests/field-metadata-check.html`；驻军武器及其关联检查位于 `tests/garrison-weapons-check.html`；武器的直接命中与附着炸弹弹头检查位于 `tests/weapon-warheads-check.html`。启动本地服务器后可访问这些页面运行。
 
-`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。
+`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html`、`tests/object-creation-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑、对象新增和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。

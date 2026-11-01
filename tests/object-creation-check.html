@@ -1,0 +1,96 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Object creation check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[InfantryTypes]\n0=VIRUS\n1=OTHER\n[WeaponTypes]\n0=Virusgun\n[Warheads]\n0=VirusAttach\n1=VirusWH\n[Projectiles]\n0=Invisible\n[VIRUS]\nName=病毒狙击手\nUIName=NAME:Virus\nPrimary=Virusgun\nElitePrimary=Virusgun\nCost=500\nCustom.Unit=yes ; preserve\n[OTHER]\nName=Other\nPrimary=Virusgun\n[Virusgun]\nDamage=200\nRange=11\nProjectile=Invisible\nWarhead=VirusAttach\nIvanBomb.Warhead=VirusWH\n[VirusAttach]\nMindControl=no\n[VirusWH]\nCellSpread=1\nCustom.WH=old ; keep\n[Invisible]\nInviso=yes\n[MultipleMindControlTankE]\nDamage=10\nProjectile=Invisible\nWarhead=VirusWH\n[MultipleMindControlT_NEW]\nValue=1\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'fixture did not load');
+  let field = d.querySelector('[data-field="Cost"]'); field.value = '600'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(50);
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  check(count() === 1, 'fixture edit did not become pending');
+  d.querySelector('[data-action="clone-object"]').click();
+  let dialog = d.querySelector('#editor-dialog'), id = dialog.querySelector('#create-id');
+  check(dialog.open && id.value === 'VIRUS_NEW' && dialog.querySelector('[data-template-id="VIRUS"]').checked, 'clone dialog did not use current unit');
+  check(dialog.querySelector('[data-template-list] [data-template-id]')?.dataset.templateId === 'VIRUS', 'selected template should be visible first');
+  check(w.getComputedStyle(dialog.querySelector('[data-create-apply]')).display === 'none', 'creation button shown before preview');
+  let search = dialog.querySelector('#create-template-search');
+  search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: 'bing' }));
+  search.value = '病毒'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '病毒' }));
+  check(d.activeElement === id || search.isConnected, 'template search was replaced while composing');
+  check(dialog.querySelector('[data-template-id="VIRUS"]'), 'Chinese template search did not match');
+  const longType = dialog.querySelector('#create-type'); longType.value = 'weapon'; longType.dispatchEvent(new w.Event('change', { bubbles: true }));
+  search.value = 'MultipleMindControlTankE'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const longTemplate = dialog.querySelector('[data-template-id="MultipleMindControlTankE"]'); check(longTemplate, 'long template not found');
+  longTemplate.checked = true; longTemplate.dispatchEvent(new w.Event('change', { bubbles: true }));
+  check(id.value === 'MultipleMindControl_NEW2' && id.value.length === 24, 'long suggested ID was not shortened or collision-safe');
+  id.value = 'ABCDEFGHIJKLMNOPQRSTUVWXY'; id.dispatchEvent(new w.Event('input', { bubbles: true })); dialog.querySelector('[data-create-next]').click();
+  check(dialog.querySelector('[data-editor-error]')?.textContent.includes('24 个字符') && count() === 1, 'overlong object ID was not rejected safely');
+  dialog.querySelector('[data-editor-close]').click(); d.querySelector('[data-action="clone-object"]').click();
+  dialog = d.querySelector('#editor-dialog'); id = dialog.querySelector('#create-id');
+  id.value = 'virus'; id.dispatchEvent(new w.Event('input', { bubbles: true })); dialog.querySelector('[data-create-next]').click();
+  check(dialog.querySelector('[data-editor-error]')?.textContent.includes('已存在') && count() === 1, 'duplicate ID was not rejected safely');
+  id.value = 'VIRUS_NEW'; id.dispatchEvent(new w.Event('input', { bubbles: true })); dialog.querySelector('[data-create-next]').click();
+  check(!dialog.querySelector('[data-create-preview]').hidden && dialog.textContent.includes('[InfantryTypes] 2=VIRUS_NEW'), 'creation preview omitted registration');
+  check(dialog.textContent.includes('Primary') && dialog.textContent.includes('Virusgun') && dialog.textContent.includes('建造前置') && count() === 1, 'preview mutated the project or omitted shared references and availability');
+  const rect = dialog.getBoundingClientRect(); check(rect.top >= 0 && rect.bottom <= w.innerHeight, 'creation dialog exceeds viewport');
+  dialog.querySelector('[data-editor-close]').click();
+  check(count() === 1 && d.querySelector('.detail-name p').textContent.includes('[VIRUS]'), 'cancelling preview changed the project');
+  d.querySelector('[data-action="clone-object"]').click(); dialog = d.querySelector('#editor-dialog');
+  dialog.querySelector('[data-create-next]').click(); dialog.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[VIRUS_NEW]'), 'new unit was not selected');
+  check(d.querySelector('[data-field="Cost"]').value === '600' && d.querySelector('[data-field="Primary"]').value === 'Virusgun', 'clone lost pending values or shared weapon');
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="Image"]').value === 'VIRUS' && d.querySelector('[data-field="UIName"]').value === 'NAME:Virus' && d.querySelector('[data-field="Custom.Unit"]').value === 'yes', 'clone did not preserve image, name or unknown field');
+  check(d.querySelector('[data-action="add-field"]'), 'unit raw attributes cannot add fields');
+  d.querySelector('[data-tab="basic"]').click(); d.querySelector('[data-jump-field="Primary"]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[Virusgun]'), 'shared weapon could not open');
+  d.querySelector('[data-action="clone-object"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('#create-id').value === 'Virusgun_NEW', 'weapon clone ID not suggested');
+  dialog.querySelector('[data-create-next]').click(); dialog.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[Virusgun_NEW]'), 'new weapon was not selected');
+  check(d.querySelector('[data-field="IvanBomb.Warhead"]').value === 'VirusWH', 'weapon clone lost bomb warhead');
+  d.querySelector('[data-jump-field="IvanBomb.Warhead"]').click(); d.querySelector('[data-action="clone-object"]').click();
+  dialog = d.querySelector('#editor-dialog'); check(dialog.querySelector('#create-id').value === 'VirusWH_NEW', 'warhead clone ID not suggested');
+  dialog.querySelector('[data-create-next]').click(); dialog.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[VirusWH_NEW]'), 'new warhead was not selected');
+  d.querySelector('[data-action="nav-back"]').click(); d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[Virusgun_NEW]'), 'back did not return to new weapon');
+  d.querySelector('[data-action="choose-options"][data-kind="warhead"][data-key="IvanBomb.Warhead"]').click();
+  dialog = d.querySelector('#editor-dialog'); search = dialog.querySelector('#choice-search'); search.value = 'VirusWH_NEW'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  let choice = dialog.querySelector('[data-choice="VirusWH_NEW"]'); check(choice, 'new warhead is missing from selector'); choice.checked = true; choice.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(50);
+  check(d.querySelector('[data-field="IvanBomb.Warhead"]').value === 'VirusWH_NEW' && d.querySelector('[data-field="Warhead"]').value === 'VirusAttach', 'updating bomb warhead changed the wrong reference');
+  d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="VIRUS_NEW"]').click();
+  d.querySelector('[data-action="choose-options"][data-kind="weapon"][data-key="Primary"]').click();
+  dialog = d.querySelector('#editor-dialog'); search = dialog.querySelector('#choice-search'); search.value = 'Virusgun_NEW'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  choice = dialog.querySelector('[data-choice="Virusgun_NEW"]'); check(choice, 'new weapon is missing from selector'); choice.checked = true; choice.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-editor-apply]').click(); await delay(50);
+  check(d.querySelector('[data-field="Primary"]').value === 'Virusgun_NEW', 'new unit primary was not updated');
+  d.querySelector('[data-tab="raw"]').click(); check(d.querySelector('[data-field="ElitePrimary"]').value === 'Virusgun', 'changing the primary also changed the elite weapon');
+  d.querySelector('[data-action="create-object"]').click(); dialog = d.querySelector('#editor-dialog');
+  const type = dialog.querySelector('#create-type'); type.value = 'projectile'; type.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[name="create-mode"][value="blank"]').click(); id = dialog.querySelector('#create-id'); id.value = 'BlankProj'; id.dispatchEvent(new w.Event('input', { bubbles: true }));
+  dialog.querySelector('[data-create-next]').click(); dialog.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[BlankProj]'), 'empty projectile was not created');
+  d.querySelector('[data-action="changes"]').click();
+  check(d.querySelector('#changes-dialog').textContent.includes('新增规则段 [BlankProj]') && d.querySelector('#changes-dialog').textContent.includes('新增规则段 [VIRUS_NEW]'), 'new sections missing from changes');
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  check(saved.includes('2=VIRUS_NEW') && saved.includes('1=Virusgun_NEW') && saved.includes('2=VirusWH_NEW') && saved.includes('1=BlankProj'), 'type registrations missing from export');
+  check(saved.includes('[VIRUS_NEW]') && saved.includes('Image=VIRUS') && saved.includes('Primary=Virusgun_NEW') && saved.includes('IvanBomb.Warhead=VirusWH_NEW'), 'new objects or references missing from export');
+  check(saved.includes('Custom.Unit=yes ; preserve') && saved.includes('Custom.WH=old ; keep') && saved.includes('Cost=600'), 'clone lost unknown fields, comments or earlier edits');
+  d.querySelector('#changes-dialog [data-close]').click(); d.querySelector('[data-action="create-object"]').click(); dialog = d.querySelector('#editor-dialog');
+  const genericType = dialog.querySelector('#create-type'); genericType.value = 'sections'; genericType.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[name="create-mode"][value="blank"]').click(); id = dialog.querySelector('#create-id'); id.value = 'CustomRules'; id.dispatchEvent(new w.Event('input', { bubbles: true }));
+  dialog.querySelector('[data-create-next]').click(); check(!dialog.querySelector('[data-create-preview]').textContent.includes('类型登记'), 'generic section unexpectedly registered'); dialog.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'CustomRules' && d.querySelector('[data-action="add-field"]'), 'generic section was not selected or cannot add fields');
+  result.textContent = 'PASS: creation preview, cancellation, cloning, registration, shared references, selectors, navigation and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

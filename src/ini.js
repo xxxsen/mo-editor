@@ -98,6 +98,15 @@ function assertValue(file, value) {
   }
 }
 
+function lineBytes(line) {
+  return line.patch === undefined ? line.raw : concat([line.raw.slice(0, line.valueStart), encoder.encode(line.patch), line.raw.slice(line.valueEnd)]);
+}
+
+function insertLines(file, index, lines) {
+  if (index > 0 && !file.lines[index - 1].eol) file.lines[index - 1].eol = file.newline;
+  file.lines.splice(index, 0, ...lines);
+}
+
 export class IniProject {
   constructor(files, mainPath) {
     this.files = files;
@@ -160,6 +169,64 @@ export class IniProject {
   section(name) { return this.sections.get(keyOf(name)); }
   get(section, key) { return this.section(section)?.fields.get(keyOf(key)); }
 
+  // A candidate project can be prepared without modifying the current unsaved edits.
+  fork() {
+    const copied = new Map();
+    const files = this.files.map(file => {
+      const lines = file.lines.map(line => {
+        const result = { ...line };
+        copied.set(line, result);
+        return result;
+      });
+      return { ...file, lines };
+    });
+    for (const file of files) for (const line of file.lines) {
+      if (line.fixedHeader) line.fixedHeader = copied.get(line.fixedHeader);
+    }
+    return new IniProject(files, this.mainPath);
+  }
+
+  createSection(name, file, sourceName = '') {
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name)) throw new Error('规则 ID 只能使用英文字母、数字、下划线、点和连字符，且必须以字母、数字或下划线开头。');
+    if (this.section(name)) throw new Error(`规则段 [${name}] 已存在。`);
+    if (!this.files.includes(file) || !this.loadOrder.includes(file)) throw new Error('目标文件不在当前加载的规则中。');
+    const source = sourceName ? this.section(sourceName) : null;
+    if (sourceName && !source) throw new Error(`找不到模板规则段 [${sourceName}]。`);
+    const lines = [];
+    const header = parseLine(encoder.encode(`[${name}]`), file.newline, file.decoder);
+    header.addedSection = true;
+    lines.push(header);
+    for (const field of source?.fields.values() || []) {
+      let raw = lineBytes(field.line);
+      if (field.file.encoding.label !== file.encoding.label && raw.some(byte => byte > 127)) {
+        if (file.encoding.label !== 'utf-8' || !file.encoding.reliable) throw new Error('模板字段来自不同编码的文件，无法安全复制非 ASCII 内容。');
+        raw = encoder.encode(field.file.decoder.decode(raw));
+      }
+      const copy = parseLine(raw, file.newline, file.decoder);
+      copy.added = true;
+      copy.cloned = true;
+      lines.push(copy);
+    }
+    insertLines(file, file.lines.length, lines);
+    this.rebuild();
+  }
+
+  // Type registries must be appended, not inserted at the start of the section.
+  appendEntry(sectionName, key, value, fallbackFile) {
+    if (!this.section(sectionName)) this.createSection(sectionName, fallbackFile);
+    const section = this.section(sectionName);
+    if (section.fields.has(keyOf(key))) throw new Error(`类型列表 [${sectionName}] 中的编号 ${key} 已存在。`);
+    const { file, line: header } = section.occurrences.at(-1);
+    assertValue(file, value);
+    const added = parseLine(encoder.encode(`${key}=`), file.newline, file.decoder);
+    added.added = true;
+    added.patch = value;
+    let index = file.lines.indexOf(header) + 1;
+    while (index < file.lines.length && file.lines[index].section === null) index++;
+    insertLines(file, index, [added]);
+    this.rebuild();
+  }
+
   set(sectionName, key, rawValue) {
     const value = String(rawValue).trim();
     const section = this.section(sectionName);
@@ -174,10 +241,10 @@ export class IniProject {
           const header = existing.line.fixedHeader;
           const headerIndex = existing.file.lines.indexOf(header);
           const following = existing.file.lines.slice(headerIndex + 1).find(line => line.section !== null || line.added);
-          if (following?.added) following.fixedHeader = header;
-          else header.eol = '';
+          if (following?.added && following.section === null) following.fixedHeader = header;
+          else if (!following) header.eol = '';
         }
-      } else existing.line.patch = value === existing.line.originalValue && !existing.line.added ? undefined : value;
+      } else existing.line.patch = value === existing.line.originalValue && (!existing.line.added || existing.line.cloned) ? undefined : value;
     } else if (value !== '') {
       const { file, line: header } = section.occurrences.at(-1);
       assertValue(file, value);
@@ -196,7 +263,10 @@ export class IniProject {
     for (const file of this.files) {
       let section = '';
       for (const line of file.lines) {
-        if (line.section !== null) section = line.section;
+        if (line.section !== null) {
+          section = line.section;
+          if (line.addedSection) changes.push({ file, section, kind: 'section', before: null, after: section });
+        }
         else if (line.key && line.patch !== undefined) changes.push({ file, section, key: line.key, before: line.added ? null : line.originalValue, after: line.patch });
       }
     }
@@ -208,7 +278,7 @@ export function serialize(file) {
   const chunks = [];
   let size = 0;
   for (const line of file.lines) {
-    const raw = line.patch === undefined ? line.raw : concat([line.raw.slice(0, line.valueStart), encoder.encode(line.patch), line.raw.slice(line.valueEnd)]);
+    const raw = lineBytes(line);
     const eol = encoder.encode(line.eol);
     chunks.push(raw, eol);
     size += raw.length + eol.length;

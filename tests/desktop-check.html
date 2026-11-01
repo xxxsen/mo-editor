@@ -116,12 +116,18 @@ frame.addEventListener('load', async () => {
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Packed Tank', 'MIX include was not loaded');
   check(d.querySelector('[data-field="Cost"]').value === '200', 'MIX include value incorrect');
   cost = d.querySelector('[data-field="Cost"]'); cost.value = '230'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="clone-object"]').click();
+  let editor = d.querySelector('#editor-dialog'); check(editor.querySelector('#create-id').value === 'PACKED_NEW', 'MIX clone ID not suggested');
+  editor.querySelector('[data-create-next]').click(); check(editor.textContent.includes('保存为独立 INI'), 'MIX clone preview did not describe loose output');
+  editor.querySelector('[data-create-apply]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[PACKED_NEW]') && d.querySelector('[data-field="Cost"]').value === '230', 'MIX clone lost edited values');
   d.querySelector('[data-jump-field="Primary"]').click(); d.querySelector('[data-jump-field="Projectile"]').click();
   const invis = d.querySelector('[data-field="Inviso"]'); check(invis?.value === 'yes', 'MIX projectile did not load');
   invis.value = 'no'; invis.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
   d.querySelector('[data-action="save"]').click();
   await waitFor(() => packed.has('rulesmo.ini') && packed.has('units.ini') && !d.querySelector('#app').inert, 'MIX save did not create loose rules');
   check(decoder.decode(packed.get('units.ini')).includes('Cost=230 ; packed') && decoder.decode(packed.get('units.ini')).includes('Inviso=no ; projectile'), 'MIX include or projectile edit not written');
+  check(decoder.decode(packed.get('rulesmo.ini')).includes('1=PACKED_NEW') && decoder.decode(packed.get('units.ini')).includes('[PACKED_NEW]') && decoder.decode(packed.get('units.ini')).includes('Image=PACKED'), 'MIX clone or registration not written');
   d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('#changes-dialog').textContent.includes('rulesmo.ini') && d.querySelector('[data-restore="0"]'), 'MIX history missing');
   d.querySelector('[data-restore="0"]').click();
   try {

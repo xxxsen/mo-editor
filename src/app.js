@@ -4,6 +4,7 @@ import { GameResources } from './resources.js';
 import { STANDARD_ARMORS, GLOBAL_SECTIONS, globalFieldInfo, countriesFor, sidesFor, armorsFor, prerequisitesFor, mergeSelections, updateVerses } from './rule-schema.js';
 import { getFieldInfo } from './field-metadata.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
+import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 
@@ -430,7 +431,7 @@ function render({ resetList = false, viewOverride = null } = {}) {
       </header>
       <div class="content"><div class="intro"><div><div class="eyebrow">RULES WORKBENCH</div><h1>心灵终结规则编辑器</h1><p>让每一项规则清晰可查，从一个单位开始调整。</p></div><div class="project-badge"><span class="dot"></span><span>主文件</span><button type="button" class="main-file-trigger" data-action="choose-main" aria-haspopup="dialog" aria-label="选择主规则文件" title="${h(mainName)}"><span>${h(mainName)}</span>${icon('chevron', 13)}</button></div></div>
       ${noticeMarkup()}
-      <div class="workspace"><section class="library" aria-label="对象列表"><div class="library-head"><div class="library-title"><h2>${h(labelFor(state.category) === '对象' ? '全部对象' : labelFor(state.category))}</h2><span>${library.count} ITEMS</span></div><div class="search-wrap">${icon('search', 15)}<input class="search" id="search" type="search" placeholder="搜索对象或全局参数..." value="${h(state.search)}" aria-label="搜索对象或全局参数"></div>${state.category === 'all' || unitTypes.has(state.category) ? `<select id="owner-filter" class="owner-filter" aria-label="按所属方筛选"><option value="">全部所属方</option>${ownerOptions}</select>` : ''}</div><div class="list-meta"><span>${state.search.trim() ? '搜索结果' : '对象列表'}</span><span>NAME / ID</span></div><div class="unit-list">${library.markup}</div></section>
+      <div class="workspace"><section class="library" aria-label="对象列表"><div class="library-head"><div class="library-title"><h2>${h(labelFor(state.category) === '对象' ? '全部对象' : labelFor(state.category))}</h2><span>${library.count} ITEMS</span>${state.category !== 'global' ? '<button type="button" class="library-create" data-action="create-object">＋ 新增</button>' : ''}</div><div class="search-wrap">${icon('search', 15)}<input class="search" id="search" type="search" placeholder="搜索对象或全局参数..." value="${h(state.search)}" aria-label="搜索对象或全局参数"></div>${state.category === 'all' || unitTypes.has(state.category) ? `<select id="owner-filter" class="owner-filter" aria-label="按所属方筛选"><option value="">全部所属方</option>${ownerOptions}</select>` : ''}</div><div class="list-meta"><span>${state.search.trim() ? '搜索结果' : '对象列表'}</span><span>NAME / ID</span></div><div class="unit-list">${library.markup}</div></section>
       <section class="detail" aria-label="对象详情">${selected ? renderDetail(selected) : '<div class="no-detail"><div><strong>选择一个规则对象</strong>从左侧列表中选择，或导入包含单位列表的规则文件。</div></div>'}</section></div>
       <div class="footer-note"><span>已加载 ${state.project.loadOrder.length} 次文件 · ${state.demo ? '演示项目' : '本地项目'}</span><code>LOCAL FILES / NO GAME ASSETS INCLUDED</code></div>
       </div>
@@ -446,7 +447,7 @@ function renderDetail(entity) {
   const sec = project.section(entity.id);
   const tab = state.tab;
   const detailBody = !sec ? `<div class="no-detail"><div><strong>找不到这个对象的定义</strong>它被列入类型列表，但当前导入的文件中没有 [${h(entity.id)}]。<br>请检查是否缺少 include 文件。</div></div>` : tab === 'basic' ? renderBasic(entity) : tab === 'relations' ? renderRelations(entity) : renderRaw(entity);
-  return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" ${entity.type === 'projectile' ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
+  return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" ${entity.type === 'projectile' ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-actions">${sec ? '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
 }
 
 const unitBasic = ['Strength', 'Cost', 'Speed', 'Sight', 'Armor', 'TechLevel'];
@@ -478,8 +479,9 @@ function choicesFor(kind, value) {
   if (kind === 'armor') return armorsFor(state.project, value);
   if (kind === 'side') return sidesFor(state.project, value);
   if (kind === 'prerequisite') return prerequisitesFor(state.project, state.resources?.strings, value);
-  if (kind === 'projectile') {
-    const choices = state.entities.filter(item => item.type === 'projectile').map(item => ({ id: item.id, label: item.name, group: item.exists ? '已加载的投射物' : '未找到定义的投射物' }));
+  if (['weapon', 'warhead', 'projectile'].includes(kind)) {
+    const label = labelFor(kind);
+    const choices = state.entities.filter(item => item.type === kind).map(item => ({ id: item.id, label: item.name, group: item.exists ? `已加载的${label}` : `未找到定义的${label}` }));
     const id = value.trim();
     if (id && !choices.some(option => lower(option.id) === lower(id))) choices.push({ id, label: id, group: '当前未登记的代码' });
     return choices;
@@ -512,9 +514,9 @@ function choiceField(entity, key, info, kind, field) {
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${reference ? `<div class="value-control">${control}${reference}</div>` : control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
 
-function fieldReference(entity, key, value) {
+function referenceType(entity, key) {
   const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
-  if (!actual) return null;
+  if (!actual) return '';
   let type = '';
   if (unitTypes.has(actual.type) && weaponKey(key)) type = 'weapon';
   else if (unitTypes.has(actual.type) && /^(superweapon|superweapon2)$/i.test(key)) type = 'superweapon';
@@ -523,6 +525,13 @@ function fieldReference(entity, key, value) {
   else if (actual.type === 'projectile' && /^(airburstweapon|shrapnelweapon)$/i.test(key)) type = 'weapon';
   else if (actual.type === 'superweapon' && /^sw\.warhead$/i.test(key)) type = 'warhead';
   else if (actual.type === 'superweapon' && /^(weapontype|nuke\.payload)$/i.test(key)) type = 'weapon';
+  return type;
+}
+
+function fieldReference(entity, key, value) {
+  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  if (!actual) return null;
+  const type = referenceType(entity, key);
   if (!type) return null;
   let id = String(value || '').trim();
   let isDefault = false;
@@ -535,6 +544,12 @@ function fieldReference(entity, key, value) {
   if (!target) return null;
   const info = fieldInfoFor(actual, key);
   return { id: target.id, type, name: target.name, isDefault, via: `${info.label} / ${key}${isDefault ? '（全局默认）' : ''}` };
+}
+
+function referenceChoiceMarkup(entity, key) {
+  const kind = referenceType(entity, key);
+  if (!['weapon', 'warhead', 'projectile'].includes(kind)) return '';
+  return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="选择${h(labelFor(kind))}">选择</button>`;
 }
 
 function fieldReferenceMarkup(entity, key, value) {
@@ -564,8 +579,7 @@ function fieldMarkup(entity, key) {
     const canUnset = !raw || (projectileBoolean && field?.line.added);
     control = `<select class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}>${canUnset ? `<option value="" ${raw ? '' : 'selected'}>未定义</option>` : ''}<option value="${h(yes)}" ${raw && truthy ? 'selected' : ''}>是</option><option value="${h(no)}" ${raw && !truthy ? 'selected' : ''}>否</option></select>`;
   } else {
-    const chooseProjectile = entity.type === 'weapon' && lower(key) === 'projectile' ? `<button type="button" class="split-button" data-action="choose-options" data-kind="projectile" data-key="${h(key)}" aria-label="选择投射物">选择</button>` : '';
-    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${chooseProjectile}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
+    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${referenceChoiceMarkup(entity, key)}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
   }
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
@@ -582,7 +596,7 @@ function renderGlobal(entity) {
     return `<div data-global-row data-search-text="${h(search)}" ${q && !search.includes(q) ? 'hidden' : ''}>${fieldMarkup(entity, field.name)}${info.inlineHint ? `<p class="global-field-hint">${h(info.description)}</p>` : ''}</div>`;
   };
   const hint = lower(entity.id) === 'multiplayerdialogsettings' ? '游戏模式或启动器可能覆盖这些默认值。' : '显示当前规则段中的全部已定义参数。';
-  return `<div class="detail-top"><div class="detail-kicker">${entity.type === 'global' ? 'GLOBAL SETTINGS' : 'RULE SECTION'} <span>/</span> ${h(entity.id.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon">${icon('global', 32)}</div><div class="detail-name"><h2>${h(entity.name)}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${fields.length} 个参数</p></div><div class="hero-status">${state.changedSections.has(lower(entity.id)) ? '● 有修改' : '● 已解析'}</div></div></div><div class="detail-body"><div class="section-head"><div><h3>${h(entity.description || '全局规则')}</h3><p>${h(hint)}</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="search-wrap global-search-wrap">${icon('search', 15)}<input class="search" id="global-search" type="search" value="${h(state.globalSearch)}" placeholder="在此设置中搜索名称、字段或值..." aria-label="搜索全局参数"></div>${common.length ? `<div class="global-group-title">常用设置 <span>${common.length}</span></div><div class="field-grid global-grid">${common.map(row).join('')}</div>` : ''}<div class="global-group-title">${common.length ? '其他参数' : '全部参数'} <span>${other.length}</span></div><div class="field-grid global-grid">${other.map(row).join('')}</div></div>`;
+  return `<div class="detail-top"><div class="detail-kicker">${entity.type === 'global' ? 'GLOBAL SETTINGS' : 'RULE SECTION'} <span>/</span> ${h(entity.id.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon">${icon('global', 32)}</div><div class="detail-name"><h2>${h(entity.name)}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${fields.length} 个参数</p></div><div class="hero-actions">${entity.type === 'sections' ? '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${state.changedSections.has(lower(entity.id)) ? '● 有修改' : '● 已解析'}</div></div></div></div><div class="detail-body"><div class="section-head"><div><h3>${h(entity.description || '全局规则')}</h3><p>${h(hint)}</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="search-wrap global-search-wrap">${icon('search', 15)}<input class="search" id="global-search" type="search" value="${h(state.globalSearch)}" placeholder="在此设置中搜索名称、字段或值..." aria-label="搜索全局参数"></div>${common.length ? `<div class="global-group-title">常用设置 <span>${common.length}</span></div><div class="field-grid global-grid">${common.map(row).join('')}</div>` : ''}<div class="global-group-title">${common.length ? '其他参数' : '全部参数'} <span>${other.length}</span></div><div class="field-grid global-grid">${other.map(row).join('')}</div></div>`;
 }
 
 function renderVerses(entity) {
@@ -732,9 +746,9 @@ function renderRelations(entity) {
 }
 function renderRaw(entity) {
   const fields = [...state.project.section(entity.id).fields.values()];
-  return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div>${entity.type === 'projectile' ? '<button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button>' : `<span class="section-num">${fields.length} KEYS</span>`}</div><div class="raw-list">${fields.map(field => {
+  return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
-    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
+    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -744,7 +758,7 @@ function showToast(message) {
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove('visible'), 4500);
 }
-function selectEntity(id, type, via = '关联') {
+function selectEntity(id, type, via = '关联', preferredCategory = '') {
   let entity = entityFor(id, type) || entityFor(id);
   if (!entity) { state.entities = buildEntities(); entity = entityFor(id, type) || entityFor(id); }
   if (!entity) { showToast(`未找到关联对象 ${id}。`); return; }
@@ -759,7 +773,7 @@ function selectEntity(id, type, via = '关联') {
     navigation.trail = navigation.trail.slice(-64);
     navigation.trail[0] = { ...navigation.trail[0], truncated: true };
   }
-  state.category = ['weapon','projectile','warhead','superweapon','global','sections'].includes(entity.type) ? entity.type : 'all';
+  state.category = preferredCategory || (['weapon','projectile','warhead','superweapon','global','sections'].includes(entity.type) ? entity.type : 'all');
   state.search = '';
   state.owner = '';
   state.listLimit = 250;
@@ -951,6 +965,10 @@ app.addEventListener('click', event => {
     openListEditor(button.dataset.key);
   } else if (button.dataset.action === 'add-field') {
     openAddField();
+  } else if (button.dataset.action === 'create-object') {
+    openCreateObject(false);
+  } else if (button.dataset.action === 'clone-object') {
+    openCreateObject(true);
   } else if (button.dataset.action === 'choose-main') {
     openMainFilePicker();
   } else if (button.dataset.action === 'open') fileInput.click();
@@ -1195,6 +1213,128 @@ function showEditorError(message) {
 }
 editorDialog.addEventListener('input', () => editorDialog.querySelector('[data-editor-error]')?.remove());
 
+function openCreateObject(copyCurrent) {
+  const project = state.project;
+  state.entities = buildEntities();
+  const current = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
+  const initialType = copyCurrent && CREATE_TYPES.some(item => item.id === current?.type) ? current.type
+    : CREATE_TYPES.some(item => item.id === state.category) ? state.category
+      : CREATE_TYPES.some(item => item.id === current?.type) ? current.type : 'infantry';
+  const reservedIds = state.entities.map(item => item.id);
+  const reserved = new Set([...project.sections.keys(), ...reservedIds.map(lower), ...CREATE_TYPES.map(item => lower(item.registry))]);
+  let selectedType = initialType;
+  let selectedTemplate = '';
+  let idTouched = false;
+  let plan = null;
+  const templatesFor = type => type === 'sections'
+    ? [...project.sections.values()].map(section => ({ id: section.name, name: section.name }))
+    : state.entities.filter(item => item.type === type && item.exists);
+  function chooseTemplate() {
+    const choices = templatesFor(selectedType);
+    selectedTemplate = current?.type === selectedType && current.exists ? current.id : choices[0]?.id || '';
+  }
+  function suggestId() {
+    const base = (selectedTemplate || selectedType).replace(/[^A-Za-z0-9_.-]/g, '_');
+    const stem = /^[A-Za-z0-9_]/.test(base) ? base : `NEW_${base}`;
+    const limit = selectedType === 'sections' ? Infinity : MAX_GAME_OBJECT_ID_LENGTH;
+    let n = 1, id;
+    do {
+      const suffix = `_NEW${n === 1 ? '' : n}`;
+      id = `${stem.slice(0, limit - suffix.length)}${suffix}`;
+      n++;
+    } while (reserved.has(lower(id)));
+    return id;
+  }
+  chooseTemplate();
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">${copyCurrent ? '复制并新建' : '新增规则对象'}</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-create-form><p>先预览规则段和类型登记；确认后仍需点击主界面的保存。</p><div class="editor-fields"><label>对象类型<select id="create-type">${CREATE_TYPES.map(item => `<option value="${h(item.id)}" ${item.id === selectedType ? 'selected' : ''}>${h(item.label)}</option>`).join('')}</select></label><label>新规则 ID<input id="create-id" placeholder="例如 VIRUS_NEW" autocomplete="off" spellcheck="false"></label></div><div class="create-modes"><label><input type="radio" name="create-mode" value="copy" ${selectedTemplate ? 'checked' : ''}> 复制已有对象</label><label><input type="radio" name="create-mode" value="blank" ${selectedTemplate ? '' : 'checked'}> 空白新建</label></div><div data-template-area><div class="search-wrap">${icon('search', 15)}<input class="search" id="create-template-search" type="search" placeholder="搜索模板名称或 ID..." aria-label="搜索新建模板"></div><p class="create-template-status" data-template-status></p><div class="create-template-list" data-template-list></div></div><p class="create-note" data-create-note></p></div><div data-create-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-create-back hidden>返回修改</button><button type="button" class="btn primary" data-create-next>预览新增</button><button type="button" class="btn primary" data-create-apply hidden>创建对象</button></div>`;
+  const type = editorDialog.querySelector('#create-type');
+  const id = editorDialog.querySelector('#create-id');
+  const search = editorDialog.querySelector('#create-template-search');
+  const list = editorDialog.querySelector('[data-template-list]');
+  const status = editorDialog.querySelector('[data-template-status]');
+  const area = editorDialog.querySelector('[data-template-area]');
+  const note = editorDialog.querySelector('[data-create-note]');
+  const form = editorDialog.querySelector('[data-create-form]');
+  const preview = editorDialog.querySelector('[data-create-preview]');
+  const back = editorDialog.querySelector('[data-create-back]');
+  const next = editorDialog.querySelector('[data-create-next]');
+  const apply = editorDialog.querySelector('[data-create-apply]');
+  const mode = () => editorDialog.querySelector('[name="create-mode"]:checked')?.value || 'blank';
+  id.value = suggestId();
+
+  function drawTemplates() {
+    const query = lower(search.value.trim());
+    const matches = templatesFor(selectedType).filter(item => !query || lower(`${item.id} ${item.name || ''}`).includes(query));
+    const ordered = [...matches.filter(item => lower(item.id) === lower(selectedTemplate)), ...matches.filter(item => lower(item.id) !== lower(selectedTemplate))];
+    const shown = ordered.slice(0, 150);
+    list.innerHTML = shown.map(item => `<label class="create-template"><input type="radio" name="create-template" data-template-id="${h(item.id)}" ${lower(item.id) === lower(selectedTemplate) ? 'checked' : ''}><span><strong>${h(item.name || item.id)}</strong><small>${h(item.id)}</small></span></label>`).join('') || '<div class="empty-list">没有匹配的模板。</div>';
+    if (matches.length > shown.length) list.insertAdjacentHTML('beforeend', `<p class="option-limit">显示前 ${shown.length} 项，请输入关键词缩小范围。</p>`);
+    status.textContent = selectedTemplate ? `当前模板：${selectedTemplate}` : '当前类型没有可用模板，可选择空白新建。';
+  }
+  function updateMode() {
+    area.hidden = mode() !== 'copy';
+    const idHint = selectedType === 'sections' ? '' : `游戏对象 ID 最多 ${MAX_GAME_OBJECT_ID_LENGTH} 个字符。`;
+    note.textContent = idHint + (mode() === 'copy'
+      ? '复制有效字段并沿用现有引用；武器、弹头、图像和中文名不会自动复制。单位未指定 Image 时会复用模板图像。'
+      : '空白对象只创建规则段和所需类型登记，需自行补充必要字段；是否能建造或使用还受其他规则影响。');
+  }
+  type.addEventListener('change', () => {
+    selectedType = type.value;
+    search.value = '';
+    chooseTemplate();
+    if (!selectedTemplate) editorDialog.querySelector('[name="create-mode"][value="blank"]').checked = true;
+    if (!idTouched) id.value = suggestId();
+    drawTemplates(); updateMode();
+  });
+  id.addEventListener('input', () => { idTouched = true; });
+  search.addEventListener('input', drawTemplates);
+  list.addEventListener('change', event => {
+    if (event.target.dataset.templateId === undefined) return;
+    selectedTemplate = event.target.dataset.templateId;
+    if (!idTouched) id.value = suggestId();
+    status.textContent = `当前模板：${selectedTemplate}`;
+  });
+  editorDialog.querySelectorAll('[name="create-mode"]').forEach(input => input.addEventListener('change', updateMode));
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  back.addEventListener('click', () => {
+    plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false;
+    editorDialog.querySelector('[data-editor-error]')?.remove();
+    id.focus({ preventScroll: true });
+  });
+  next.addEventListener('click', () => {
+    try {
+      if (state.project !== project) throw new Error('当前项目已改变，请重新打开新增窗口。');
+      if (mode() === 'copy' && !selectedTemplate) throw new Error('请选择一个已定义的模板，或选择空白新建。');
+      plan = prepareObjectCreation(project, { type: selectedType, id: id.value, template: mode() === 'copy' ? selectedTemplate : '', reservedIds });
+      const location = file => `${h(file.path)}${file.sourceArchive ? `（来源 ${h(file.sourceArchive)}；保存为独立 INI）` : ''}`;
+      const refs = [...plan.project.section(plan.id).fields.values()].filter(field => /^(?:image|uiname|primary|secondary|eliteprimary|elitesecondary|occupyweapon|eliteoccupyweapon|weapon\d+|eliteweapon\d+|projectile|warhead|ivanbomb\.warhead|airburstweapon|shrapnelweapon|superweapon|superweapon2|superweapons|sw\.warhead|weapontype|nuke\.payload)$/i.test(field.name) && field.value.trim());
+      const references = refs.length ? `<div class="create-preview-refs"><strong>保留的引用</strong>${refs.map(field => `<div><code>${h(field.name)}</code> = ${h(field.value)}</div>`).join('')}</div>` : '';
+      const usageHint = unitTypes.has(plan.type) ? '单位能否建造还取决于所属方、建造前置、科技等级及其他规则。'
+        : plan.type === 'superweapon' ? '超级武器通常需要由建筑提供，或按规则设置始终可用；不会自动替换建筑已有的超级武器。'
+          : ['weapon', 'warhead', 'projectile'].includes(plan.type) ? `新增${plan.label}还需被其他规则引用，才会用于对应效果。` : '';
+      preview.innerHTML = `<p>确认后会加入当前未保存的修改；原规则文件在点击“保存”前不会改变。</p><div class="create-preview-card"><div><span>新增${h(plan.label)}</span><strong>[${h(plan.id)}]</strong></div><div><span>模板</span><strong>${plan.template ? h(plan.template) : '空白新建'}</strong></div><div><span>定义文件</span><strong>${location(plan.definitionFile)}</strong></div>${plan.registry ? `<div><span>类型登记</span><strong>[${h(plan.registry)}] ${plan.registryIndex}=${h(plan.id)}<br>${location(plan.registryFile)}${plan.registryCreated ? '（新增列表）' : ''}</strong></div>` : ''}</div>${plan.template ? '<p class="create-note">下列引用继续指向原对象；修改共享对象会影响其他使用者。中文名和图像资源不会新建。</p>' : '<p class="create-note">空白规则段仍需补充游戏所需属性。</p>'}${references}${usageHint ? `<p class="create-note">${h(usageHint)}</p>` : ''}${plan.type === 'projectile' && plan.registryCreated ? '<p class="create-note">当前规则没有投射物列表，将新增列表以便管理。</p>' : ''}`;
+      form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
+      editorDialog.querySelector('[data-editor-error]')?.remove();
+      apply.focus({ preventScroll: true });
+    } catch (error) { showEditorError(error.message); }
+  });
+  apply.addEventListener('click', () => {
+    if (!plan || state.project !== project) { showEditorError('当前项目已改变，请重新预览。'); return; }
+    const previousCategory = state.category;
+    state.project = plan.project;
+    if (plan.type === 'sections') state.category = 'sections';
+    state.entities = buildEntities();
+    state.category = previousCategory;
+    editorDialog.close();
+    selectEntity(plan.id, plan.type, plan.template ? '复制新建' : '新增', plan.type);
+    showToast(`已新建 ${plan.label} ${plan.id}；点击保存后写入规则文件。`);
+  });
+  drawTemplates(); updateMode();
+  editorDialog.showModal();
+  id.focus({ preventScroll: true });
+  id.select();
+}
+
 function openMainFilePicker() {
   const current = state.project.mainPath;
   const files = state.project.files.map((file, index) => ({ file, index })).sort((a, b) => {
@@ -1245,13 +1385,13 @@ function openMainFilePicker() {
 function openChoices(kind, key) {
   const section = state.selected;
   const raw = state.project.get(section, key)?.value || '';
-  const single = ['armor', 'side', 'superweapon', 'projectile'].includes(kind);
+  const single = ['armor', 'side', 'superweapon', 'weapon', 'warhead', 'projectile'].includes(kind);
   const values = single ? (raw ? [raw] : []) : raw.split(',').map(value => value.trim()).filter(Boolean);
   const selected = new Map(values.map(value => [lower(value), value]));
   const options = choicesFor(kind, raw);
-  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', projectile: '选择投射物', superweapon: '选择超级武器', superweapons: '选择超级武器' };
+  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', superweapon: '选择超级武器', superweapons: '选择超级武器' };
   const title = labels[kind] || '选择规则项';
-  const description = kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : kind === 'projectile' ? '可搜索已加载和武器引用的投射物；未找到定义的代码会单独标识。' : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
+  const description = kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile'].includes(kind) ? `可搜索已加载的${labelFor(kind)}；未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
   editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">${h(title)}</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>${h(description)}</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="choice-search" type="search" placeholder="搜索中文、英文或代码..." aria-label="搜索选项"></div><div class="option-toolbar"><span data-selected-count></span>${single ? '<button type="button" class="text-action" data-clear-selection>清空选择</button>' : ''}</div><div class="option-list" data-option-list></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>应用选择</button></div>`;
   const search = editorDialog.querySelector('#choice-search');
   const list = editorDialog.querySelector('[data-option-list]');
@@ -1352,7 +1492,7 @@ function openAddField() {
 function showChanges() {
   const changes = markChanges();
   const files = [...new Set(changes.map(change => change.file))];
-  dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">修改与导出 <span style="color:#90a58e;font:11px var(--mono)">${changes.length} CHANGES</span></h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body">${changes.length ? `<p>每个按钮下载对应的修改文件。MIX 中的规则会导出为独立 INI，不会修改资源包；文件夹结构不会自动创建。</p>${files.map((file,index) => `<div class="file-export"><strong>${h(sourceName(file))}</strong><button class="btn primary sm" data-export="${index}">${icon('download',14)} 下载 ${h(file.name)}</button></div>`).join('')}<div style="margin-top:18px">${changes.map(change => `<div class="change-row"><div class="where">${h(sourceName(change.file))} / [${h(change.section)}]</div><div>${h(change.key)}: <span class="before">${h(change.before === null ? '（新增）' : change.before || '（空）')}</span> → <span class="after">${h(change.after || '（空）')}</span></div></div>`).join('')}</div>` : '<p>还没有修改。选择一个对象，修改属性后可在这里预览并下载。</p>'}</div>`;
+  dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">修改与导出 <span style="color:#90a58e;font:11px var(--mono)">${changes.length} CHANGES</span></h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body">${changes.length ? `<p>每个按钮下载对应的修改文件。MIX 中的规则会导出为独立 INI，不会修改资源包；文件夹结构不会自动创建。</p>${files.map((file,index) => `<div class="file-export"><strong>${h(sourceName(file))}</strong><button class="btn primary sm" data-export="${index}">${icon('download',14)} 下载 ${h(file.name)}</button></div>`).join('')}<div style="margin-top:18px">${changes.map(change => change.kind === 'section' ? `<div class="change-row"><div class="where">${h(sourceName(change.file))}</div><div class="after">新增规则段 [${h(change.section)}]</div></div>` : `<div class="change-row"><div class="where">${h(sourceName(change.file))} / [${h(change.section)}]</div><div>${h(change.key)}: <span class="before">${h(change.before === null ? '（新增）' : change.before || '（空）')}</span> → <span class="after">${h(change.after || '（空）')}</span></div></div>`).join('')}</div>` : '<p>还没有修改。选择一个对象，修改属性后可在这里预览并下载。</p>'}</div>`;
   dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
   dialog.querySelectorAll('[data-export]').forEach(button => button.addEventListener('click', () => {
     const file = files[Number(button.dataset.export)];
