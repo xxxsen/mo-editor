@@ -4,7 +4,7 @@
 
 ## Windows 桌面版
 
-直接运行 `dist/MentalOmegaEditor-0.1.3.exe` 即可使用。Windows 需要 WebView2 运行时。
+直接运行 `dist/MentalOmegaEditor.exe` 即可使用。Windows 需要 WebView2 运行时。
 
 启动桌面程序后选择游戏目录，例如 `D:\MentalOmega`。程序会记住最近打开的目录；修改后点击「保存」或按 `Ctrl+S`，直接写回对应 INI 文件。保存前会备份被覆盖的文件；如果游戏目录中的文件在打开后被其他程序修改，保存会停止并保留当前编辑内容。
 
@@ -27,9 +27,9 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-构建输出为 `src-tauri/target/release/mental-omega-editor.exe`，可直接复制到需要的位置运行。具体工具链要求见 [Tauri 文档](https://v2.tauri.app/start/prerequisites/)。
+构建后生成免安装程序 `dist/MentalOmegaEditor.exe`；Tauri 原始输出位于 `src-tauri/target/release/mental-omega-editor.exe`。具体工具链要求见 [Tauri 文档](https://v2.tauri.app/start/prerequisites/)。
 
-开发期间沿用当前版本号；正式发版时再统一调整。
+开发构建使用固定文件名；正式发布时可由 GitLab CI 根据版本号命名产物。
 
 ## 浏览器版启动
 
