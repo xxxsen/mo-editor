@@ -1,0 +1,76 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Rule option chooser check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 200; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const rules = `[InfantryTypes]\n0=UNIT\n1=EMPTY\n[SuperWeaponTypes]\n0=SPECIAL\n[UNIT]\nName=测试士兵\nVeteranAbilities=STRONGER\nEliteAbilities=SELF_HEAL,FIREPOWER, MyModAbility,FASTER ; keep\nSpeedType=Foot\nMovementZone=Infantry\nCategory=Soldier\nPipScale=CustomPip\nTrainable=True\n[EMPTY]\nName=空白士兵\n[SPECIAL]\nName=测试超级武器\nType=GenericWarhead\nAction=Custom\nSW.AffectsHouse=all\nSW.AffectsTarget=land,buildings\nSW.AITargeting=IronCurtain\n[Other]\nEliteAbilities=UnrelatedValue\n`;
+  await waitFor(() => d.querySelector('.detail-name'), 'editor did not start');
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name p')?.textContent.includes('[UNIT]'), 'fixture did not load');
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  const open = key => { const button = d.querySelector(`[data-action="choose-options"][data-key="${key}"]`); check(button, `${key} has no chooser`); button.click(); return d.querySelector('#editor-dialog'); };
+  const choose = (dialog, id, checked = true) => {
+    const option = dialog.querySelector(`[data-choice="${id}"]`); check(option, `missing option ${id}`);
+    option.checked = checked; option.dispatchEvent(new w.Event('change', { bubbles: true }));
+  };
+  const searchFor = (dialog, value) => { const search = dialog.querySelector('#choice-search'); search.value = value; search.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const apply = async dialog => { dialog.querySelector('[data-editor-apply]').click(); await delay(40); };
+  check(d.querySelector('[data-key="EliteAbilities"]').textContent.includes('自动回血'), 'ability chips lack Chinese names');
+  let dialog = open('EliteAbilities');
+  check(dialog.querySelector('[data-choice="MyModAbility"]')?.checked, 'unknown ability was not retained');
+  check(dialog.querySelector('[data-choice="SELF_HEAL"]')?.checked, 'existing ability was not selected');
+  let search = dialog.querySelector('#choice-search');
+  search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: 'mian' }));
+  searchFor(dialog, '免疫 EMP');
+  search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '免疫 EMP' }));
+  check(search.isConnected && dialog.querySelector('[data-choice="EMPIMMUNE"]'), 'Chinese search or IME was interrupted');
+  check(dialog.querySelector('[data-choice="EMPIMMUNE"]').closest('label').title.includes('Ares'), 'ability description or extension hint missing');
+  choose(dialog, 'EMPIMMUNE'); dialog.querySelector('[data-editor-close]').click();
+  check(count() === 0, 'cancelling a choice changed the draft');
+  dialog = open('EliteAbilities'); searchFor(dialog, 'EMPIMMUNE'); choose(dialog, 'EMPIMMUNE'); await apply(dialog);
+  dialog = open('EliteAbilities'); check(dialog.querySelector('[data-choice="EMPIMMUNE"]')?.checked, 'ability selection was not applied'); dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="EliteAbilities"]').value === 'SELF_HEAL,FIREPOWER, MyModAbility,FASTER,EMPIMMUNE', 'editing an ability changed unknown values or order');
+  dialog = open('SpeedType'); check(dialog.querySelector('[data-choice="Foot"]').checked, 'single-choice current value missing');
+  choose(dialog, 'Hover'); await apply(dialog);
+  check(d.querySelector('[data-field="SpeedType"]').value === 'Hover', 'single-choice selection did not replace the value');
+  dialog = open('PipScale'); check(dialog.querySelector('[data-choice="CustomPip"]')?.checked, 'unknown single value was lost');
+  dialog.querySelector('[data-editor-close]').click(); check(d.querySelector('[data-field="PipScale"]').value === 'CustomPip', 'cancelling changed unknown single value');
+  dialog = open('Trainable'); check(dialog.querySelector('[data-choice="true"]')?.checked, 'boolean alias was not recognized');
+  await apply(dialog); check(d.querySelector('[data-field="Trainable"]').value === 'True', 'unchanged boolean was normalized');
+  dialog = open('Trainable'); choose(dialog, 'false'); await apply(dialog);
+  check(d.querySelector('[data-field="Trainable"]').value === 'false', 'boolean chooser did not apply');
+  d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="EMPTY"][data-type="infantry"]').click();
+  dialog = open('VeteranAbilities'); choose(dialog, 'CLOAK'); await apply(dialog);
+  check(d.querySelector('[data-key="VeteranAbilities"]').textContent.includes('隐形'), 'ability could not be added to an unset field');
+  d.querySelector('[data-category="superweapon"]').click(); d.querySelector('[data-entity="SPECIAL"][data-type="superweapon"]').click();
+  dialog = open('SW.AffectsHouse'); check(dialog.querySelector('[data-choice="all"]')?.checked, 'house scope was not loaded');
+  choose(dialog, 'enemies'); check(!dialog.querySelector('[data-choice="all"]').checked, 'all and an individual house should be exclusive'); await apply(dialog);
+  check(d.querySelector('[data-key="SW.AffectsHouse"]').textContent.includes('敌方'), 'house scope was not applied');
+  dialog = open('SW.AITargeting'); check(dialog.querySelector('[data-choice="IronCurtain"]').checked, 'AI targeting mode missing');
+  choose(dialog, 'Attack'); await apply(dialog);
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="SW.AffectsHouse"]').value === 'enemies' && d.querySelector('[data-field="SW.AITargeting"]').value === 'Attack', 'superweapon choice serialized incorrectly');
+  check(d.querySelector('[data-field="Action"]').value === 'Custom', 'custom superweapon action was changed');
+  d.querySelector('[data-category="sections"]').click();
+  let listSearch = d.querySelector('#search'); listSearch.value = 'UNIT'; listSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-entity="UNIT"][data-type="sections"]').click();
+  check(d.querySelector('[data-field="EliteAbilities"]') && d.querySelector('[data-action="choose-options"][data-key="EliteAbilities"]'), 'all-sections view lost manual input or chooser');
+  listSearch = d.querySelector('#search'); listSearch.value = 'Other'; listSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-entity="Other"][data-type="sections"]').click();
+  check(d.querySelector('[data-field="EliteAbilities"]').value === 'UnrelatedValue' && !d.querySelector('[data-action="choose-options"][data-key="EliteAbilities"]'), 'unrelated sections were misclassified');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  for (const text of ['EliteAbilities=SELF_HEAL,FIREPOWER, MyModAbility,FASTER,EMPIMMUNE ; keep', 'SpeedType=Hover', 'PipScale=CustomPip', 'Trainable=false', 'VeteranAbilities=CLOAK', 'SW.AffectsHouse=enemies', 'SW.AITargeting=Attack', 'Action=Custom', 'EliteAbilities=UnrelatedValue']) check(saved.includes(text), `export lost ${text}`);
+  result.textContent = 'PASS: localized single and multi choices, unknown preservation, cancellation, IME, exclusivity and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

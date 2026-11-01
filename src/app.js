@@ -3,6 +3,7 @@ import { DEMO_MAIN, DEMO_UNITS } from './demo.js';
 import { GameResources } from './resources.js';
 import { STANDARD_ARMORS, GLOBAL_SECTIONS, globalFieldInfo, countriesFor, sidesFor, armorsFor, prerequisitesFor, mergeSelections, updateVerses } from './rule-schema.js';
 import { getFieldInfo } from './field-metadata.js';
+import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import * as desktop from './desktop.js';
@@ -476,6 +477,7 @@ function fieldNameMarkup(info, key, className = 'field-label', extraTitle = '') 
 }
 
 function choicesFor(kind, value) {
+  if (enumDefinition(kind)) return enumChoices(kind, value);
   if (kind === 'armor') return armorsFor(state.project, value);
   if (kind === 'side') return sidesFor(state.project, value);
   if (kind === 'prerequisite') return prerequisitesFor(state.project, state.resources?.strings, value);
@@ -501,7 +503,8 @@ function choicesFor(kind, value) {
 
 function choiceField(entity, key, info, kind, field) {
   const raw = field?.value || '';
-  const values = ['armor', 'side', 'superweapon'].includes(kind) ? (raw ? [raw] : []) : raw.split(',').map(part => part.trim()).filter(Boolean);
+  const single = ['armor', 'side', 'superweapon'].includes(kind) || (enumDefinition(kind) && !enumDefinition(kind).multiple);
+  const values = single ? (raw ? [raw] : []) : raw.split(',').map(part => part.trim()).filter(Boolean);
   const choices = new Map(choicesFor(kind, raw).map(option => [lower(option.id), option]));
   const chips = values.slice(0, 4).map(value => {
     const option = choices.get(lower(value));
@@ -552,6 +555,17 @@ function referenceChoiceMarkup(entity, key) {
   return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="选择${h(labelFor(kind))}">选择</button>`;
 }
 
+function enumKindFor(entity, key) {
+  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  return enumKindForField(actual?.type, key);
+}
+
+function enumChoiceMarkup(entity, key) {
+  const kind = enumKindFor(entity, key);
+  if (!kind) return '';
+  return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="${h(enumDefinition(kind).title)}">选择</button>`;
+}
+
 function fieldReferenceMarkup(entity, key, value) {
   const reference = fieldReference(entity, key, value);
   if (!reference) return '';
@@ -562,6 +576,8 @@ function fieldMarkup(entity, key) {
   const field = state.project.get(entity.id, key);
   const info = fieldInfoFor(entity, key);
   const label = info.label;
+  const enumKind = enumKindFor(entity, key);
+  if (enumKind && enumKind !== 'boolean' && entity.type !== 'sections') return choiceField(entity, key, info, enumKind, field);
   if (unitTypes.has(entity.type) && lower(key) === 'armor') return choiceField(entity, key, info, 'armor', field);
   if (unitTypes.has(entity.type) && /^(superweapon|superweapon2|superweapons)$/i.test(key)) return choiceField(entity, key, info, lower(key) === 'superweapons' ? 'superweapons' : 'superweapon', field);
   if (entity.type === 'global' && entity.globalKind === 'country' && lower(key) === 'side') return choiceField(entity, key, info, 'side', field);
@@ -572,14 +588,14 @@ function fieldMarkup(entity, key) {
   const modified = field?.line.patch !== undefined ? 'is-modified' : '';
   let control;
   const projectileBoolean = entity.type === 'projectile' && projectileBooleanFields.has(lower(key)) && (!raw || /^(yes|no|true|false)$/i.test(raw));
-  if ((['global', 'sections', 'superweapon', 'projectile'].includes(entity.type) && /^(yes|no|true|false)$/i.test(raw)) || projectileBoolean) {
+  if ((['global', 'sections', 'superweapon', 'projectile'].includes(entity.type) && /^(yes|no|true|false)$/i.test(raw)) || projectileBoolean || (enumKind === 'boolean' && (!raw || /^(yes|no|true|false)$/i.test(raw)))) {
     const yesNo = /^(yes|no)$/i.test(raw), positive = yesNo ? 'yes' : 'true', negative = yesNo ? 'no' : 'false';
     const truthy = /^(yes|true)$/i.test(raw);
     const yes = raw ? (truthy ? raw : positive) : 'yes', no = raw ? (truthy ? negative : raw) : 'no';
-    const canUnset = !raw || (projectileBoolean && field?.line.added);
+    const canUnset = !raw || ((projectileBoolean || enumKind === 'boolean') && field?.line.added);
     control = `<select class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}>${canUnset ? `<option value="" ${raw ? '' : 'selected'}>未定义</option>` : ''}<option value="${h(yes)}" ${raw && truthy ? 'selected' : ''}>是</option><option value="${h(no)}" ${raw && !truthy ? 'selected' : ''}>否</option></select>`;
   } else {
-    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${referenceChoiceMarkup(entity, key)}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
+    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${enumChoiceMarkup(entity, key)}${referenceChoiceMarkup(entity, key)}${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
   }
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
@@ -633,6 +649,7 @@ function renderBasic(entity) {
   if (isUnit) {
     const extraHouses = ['RequiredHouses', 'ForbiddenHouses'].filter(key => state.project.get(entity.id, key));
     body += `<div class="block-divider"></div><div class="section-head"><div><h3>建造与武装</h3><p>选择国家和建造条件；实际可建造性还受其他规则影响。</p></div><span class="section-num">02 / LOADOUT</span></div><div class="field-grid">${[...unitAdvanced, ...extraHouses].map(key => fieldMarkup(entity, key)).join('')}</div>`;
+    body += `<div class="block-divider"></div><div class="section-head"><div><h3>晋升能力</h3><p>精英保留老兵能力；具体效果还取决于单位和扩展规则。</p></div></div><div class="field-grid">${['VeteranAbilities', 'EliteAbilities'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
     const granted = ['SuperWeapon', 'SuperWeapon2', 'SuperWeapons'];
     if (entity.type === 'building' || granted.some(key => state.project.get(entity.id, key))) {
       body += `<div class="block-divider"></div><div class="section-head"><div><h3>提供的超级武器</h3><p>选择此对象提供的超级武器；具体可用性还受其他规则限制。</p></div></div><div class="field-grid">${granted.map(key => fieldMarkup(entity, key)).join('')}</div>`;
@@ -748,7 +765,7 @@ function renderRaw(entity) {
   const fields = [...state.project.section(entity.id).fields.values()];
   return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
-    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
+    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${enumChoiceMarkup(entity, field.name)}${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -1385,13 +1402,14 @@ function openMainFilePicker() {
 function openChoices(kind, key) {
   const section = state.selected;
   const raw = state.project.get(section, key)?.value || '';
-  const single = ['armor', 'side', 'superweapon', 'weapon', 'warhead', 'projectile'].includes(kind);
+  const definition = enumDefinition(kind);
+  const single = ['armor', 'side', 'superweapon', 'weapon', 'warhead', 'projectile'].includes(kind) || (definition && !definition.multiple);
   const values = single ? (raw ? [raw] : []) : raw.split(',').map(value => value.trim()).filter(Boolean);
   const selected = new Map(values.map(value => [lower(value), value]));
   const options = choicesFor(kind, raw);
   const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', superweapon: '选择超级武器', superweapons: '选择超级武器' };
-  const title = labels[kind] || '选择规则项';
-  const description = kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile'].includes(kind) ? `可搜索已加载的${labelFor(kind)}；未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
+  const title = definition?.title || labels[kind] || '选择规则项';
+  const description = definition ? (definition.description || '可搜索中文或规则代码；当前未识别的值会保留。') : kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile'].includes(kind) ? `可搜索已加载的${labelFor(kind)}；未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
   editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">${h(title)}</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>${h(description)}</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="choice-search" type="search" placeholder="搜索中文、英文或代码..." aria-label="搜索选项"></div><div class="option-toolbar"><span data-selected-count></span>${single ? '<button type="button" class="text-action" data-clear-selection>清空选择</button>' : ''}</div><div class="option-list" data-option-list></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>应用选择</button></div>`;
   const search = editorDialog.querySelector('#choice-search');
   const list = editorDialog.querySelector('[data-option-list]');
@@ -1407,7 +1425,7 @@ function openChoices(kind, key) {
       groups.get(option.group).push(option);
     }
     countLabel.textContent = single ? (selected.size ? '已选择 1 项' : '未选择') : `已选择 ${selected.size} 项`;
-    list.innerHTML = [...groups.entries()].map(([group, items]) => `<div class="option-group"><div class="option-group-title"><span>${h(group)}</span>${kind === 'country' && !q ? `<span><button type="button" class="text-action" data-group-select="${h(group)}">全选</button><button type="button" class="text-action" data-group-clear="${h(group)}">清除</button></span>` : ''}</div><div class="option-grid">${items.map(option => `<label class="option-row"><input type="${single ? 'radio' : 'checkbox'}" name="rule-choice" data-choice="${h(option.id)}" ${selected.has(lower(option.id)) ? 'checked' : ''}><span><strong>${h(option.label)}</strong><small>${lower(option.label) === lower(option.id) ? '' : h(option.id)}${option.hint ? `${lower(option.label) === lower(option.id) ? '' : ' · '}${h(option.hint)}` : ''}</small></span></label>`).join('')}</div></div>`).join('') || '<div class="empty-list">没有匹配的选项。</div>';
+    list.innerHTML = [...groups.entries()].map(([group, items]) => `<div class="option-group"><div class="option-group-title"><span>${h(group)}</span>${kind === 'country' && !q ? `<span><button type="button" class="text-action" data-group-select="${h(group)}">全选</button><button type="button" class="text-action" data-group-clear="${h(group)}">清除</button></span>` : ''}</div><div class="option-grid">${items.map(option => `<label class="option-row"${option.hint ? ` title="${h(option.hint)}"` : ''}><input type="${single ? 'radio' : 'checkbox'}" name="rule-choice" data-choice="${h(option.id)}" ${selected.has(lower(option.id)) ? 'checked' : ''}><span><strong>${h(option.label)}</strong><small>${lower(option.label) === lower(option.id) ? '' : h(option.id)}${option.hint ? `${lower(option.label) === lower(option.id) ? '' : ' · '}${h(option.hint)}` : ''}</small></span></label>`).join('')}</div></div>`).join('') || '<div class="empty-list">没有匹配的选项。</div>';
     if (matches.length > shown.length) list.insertAdjacentHTML('beforeend', `<p class="option-limit">显示前 ${shown.length} 项，请输入关键词缩小范围。</p>`);
   }
   search.addEventListener('input', drawOptions);
@@ -1415,8 +1433,10 @@ function openChoices(kind, key) {
     const input = event.target;
     if (input.dataset.choice === undefined) return;
     if (single) selected.clear();
+    if (definition) selectEnumOption(kind, selected, input.dataset.choice, input.checked);
     if (input.checked) selected.set(lower(input.dataset.choice), input.dataset.choice);
     else selected.delete(lower(input.dataset.choice));
+    if (definition?.exclusive) list.querySelectorAll('[data-choice]').forEach(item => { item.checked = selected.has(lower(item.dataset.choice)); });
     countLabel.textContent = single ? (selected.size ? '已选择 1 项' : '未选择') : `已选择 ${selected.size} 项`;
   });
   list.addEventListener('click', event => {
