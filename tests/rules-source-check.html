@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Rules source priority check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script type="module">
+import { hashMixFilename } from '../src/resources.js';
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+const encoder = new TextEncoder();
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function mix(name, text) {
+  const body = encoder.encode(text), bytes = new Uint8Array(22 + body.length), view = new DataView(bytes.buffer);
+  view.setUint16(4, 1, true); view.setUint32(6, body.length, true);
+  view.setUint32(10, hashMixFilename(name), true); view.setUint32(14, 0, true); view.setUint32(18, body.length, true);
+  bytes.set(body, 22); return bytes;
+}
+const rule = (name, cost) => `[VehicleTypes]\n0=TANK\n[TANK]\nName=${name}\nCost=${cost} ; preserve\nStrength=300\n`;
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  w.confirm = () => true;
+  const packed = new w.File([mix('rulesmo.ini', rule('Packed Unit', 200))], 'expandmo99.mix');
+  const loose = new w.File([rule('Loose Unit', 100)], 'rulesmo.ini');
+  const rulesmd = new w.File([rule('Other Unit', 300)], 'rulesmd.ini');
+  async function load(files, expected) {
+    const transfer = new w.DataTransfer(); files.forEach(file => transfer.items.add(file));
+    const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change',{bubbles:true}));
+    for (let i=0; i<150 && d.querySelector('.detail-name h2')?.textContent !== expected; i++) await delay(10);
+    check(d.querySelector('.detail-name h2')?.textContent === expected, `failed to load ${expected}`);
+  }
+  await load([packed, loose], 'Loose Unit');
+  check(d.querySelector('[data-field="Cost"]').value === '100', 'loose rules did not take priority');
+  check(!d.querySelector('[data-field="Cost"]').closest('.field').textContent.includes('expandmo99.mix'), 'loose source incorrectly marked as MIX');
+  await load([rulesmd, packed], 'Packed Unit');
+  check(d.querySelector('[data-field="Cost"]').value === '200', 'MIX rules did not take priority over rulesmd');
+  check(d.querySelector('.resource-status').textContent.includes('MIX：expandmo99.mix'), 'MIX source missing from project status');
+  check(d.querySelector('[data-field="Cost"]').closest('.field').textContent.includes('expandmo99.mix'), 'MIX source missing from property');
+  await load([loose, packed], 'Loose Unit');
+  await load([packed], 'Packed Unit');
+  const cost = d.querySelector('[data-field="Cost"]'); cost.value = '225'; cost.dispatchEvent(new w.Event('change',{bubbles:true}));
+  await delay(30);
+  d.querySelector('[data-action="changes"]').click();
+  check(d.querySelector('dialog').textContent.includes('expandmo99.mix'), 'MIX source missing from export preview');
+  let output, filename;
+  w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; };
+  w.HTMLAnchorElement.prototype.click = function() { filename = this.download; };
+  d.querySelector('[data-export="0"]').click();
+  check(filename === 'rulesmo.ini', 'MIX rules did not export as standalone rulesmo.ini');
+  check((await output.text()).includes('Cost=225 ; preserve'), 'export did not preserve original rule structure');
+  check((await packed.arrayBuffer()).byteLength === mix('rulesmo.ini', rule('Packed Unit', 200)).length, 'source archive changed');
+  result.textContent = 'PASS: loose rules first, MIX fallback, MIX-only import, source labels and standalone export';
+ } catch (err) { result.textContent = 'FAIL: ' + err.stack; }
+});
+</script></body></html>

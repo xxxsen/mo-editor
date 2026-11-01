@@ -1,0 +1,57 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Garrison weapon check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  // The two garrison weapons are deliberately absent from [WeaponTypes].
+  const rules = `[InfantryTypes]\n0=E1\n1=NUMERIC\n[E1]\nName=Garrison Infantry\nOccupyWeapon=UCPara ; ordinary garrison weapon\nEliteOccupyWeapon=UCParaE\nOpenTransportWeapon=1\nUnknown.Garrison=preserved\n[NUMERIC]\nName=Numeric Infantry\nPrimary=<none>\nOccupyWeapon=0\nEliteOccupyWeapon=77\n[UCPara]\nName=Garrison Gun\nDamage=20\nROF=10\nRange=5\nWarhead=WH\n[UCParaE]\nName=Elite Garrison Gun\nDamage=30\nROF=10\nRange=5\nWarhead=WH\n[77]\nName=Numeric Gun\nDamage=1\n[WH]\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  for (let i = 0; i < 150 && d.querySelector('.detail-name h2')?.textContent !== 'Garrison Infantry'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === 'Garrison Infantry', 'fixture did not load');
+  d.querySelector('[data-tab="raw"]').click();
+  const rawLabel = key => d.querySelector(`[data-field="${key}"]`)?.closest('.raw-row')?.querySelector('.raw-key');
+  let label = rawLabel('OccupyWeapon');
+  check(label?.textContent.includes('驻军武器 / OccupyWeapon') && label.title.includes('驻守'), 'ordinary garrison metadata missing');
+  label = rawLabel('EliteOccupyWeapon');
+  check(label?.textContent.includes('精英驻军武器 / EliteOccupyWeapon') && label.title.includes('精英步兵'), 'elite garrison metadata missing');
+  check(rawLabel('OpenTransportWeapon').title.includes('武器槽索引'), 'transport index described incorrectly');
+  check(rawLabel('Unknown.Garrison').textContent.trim() === 'Unknown.Garrison', 'unknown field changed');
+
+  d.querySelector('[data-tab="relations"]').click();
+  const ref = key => [...d.querySelectorAll('.ref')].find(item => item.textContent.includes(`/ ${key}`));
+  check(ref('OccupyWeapon')?.querySelector('[data-jump="UCPara"]'), 'ordinary garrison weapon was not discovered');
+  check(ref('EliteOccupyWeapon')?.querySelector('[data-jump="UCParaE"]'), 'elite garrison weapon was not discovered');
+  ref('OccupyWeapon').querySelector('[data-jump="UCPara"]').click();
+  check(d.querySelector('.detail-name h2')?.textContent === 'Garrison Gun', 'garrison weapon jump failed');
+  d.querySelector('[data-tab="relations"]').click();
+  check(d.querySelector('[data-jump="E1"]'), 'garrison weapon reverse reference missing');
+
+  d.querySelector('[data-category="weapon"]').click();
+  check(d.querySelector('[data-entity="UCParaE"][data-type="weapon"]'), 'elite weapon not listed');
+  check(!d.querySelector('[data-entity="0"][data-type="weapon"]'), 'numeric default created a phantom weapon');
+  check(!d.querySelector('[data-entity="<none>"][data-type="weapon"]'), 'empty weapon created a phantom weapon');
+  check(d.querySelector('[data-entity="77"][data-type="weapon"]'), 'defined numeric weapon was dropped');
+
+  d.querySelector('[data-category="infantry"]').click();
+  d.querySelector('[data-entity="E1"][data-type="infantry"]').click();
+  d.querySelector('[data-tab="raw"]').click();
+  const field = d.querySelector('[data-field="OccupyWeapon"]');
+  field.value = 'UCParaE'; field.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(50);
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('[data-export="0"]').click();
+  const exported = await output.text();
+  check(exported.includes('OccupyWeapon=UCParaE ; ordinary garrison weapon'), 'garrison edit lost its comment');
+  check(exported.includes('EliteOccupyWeapon=UCParaE') && exported.includes('Unknown.Garrison=preserved'), 'unrelated values were modified');
+  result.textContent = 'PASS: garrison field metadata, weapon discovery, navigation, reverse references and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

@@ -1,0 +1,69 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Editor resource check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script type="module">
+import { hashMixFilename } from '../src/resources.js';
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+const encoder = new TextEncoder();
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const u32 = value => { const data = new Uint8Array(4); new DataView(data.buffer).setUint32(0, value, true); return data; };
+const combine = (...parts) => { const data = new Uint8Array(parts.reduce((n, part) => n + part.length, 0)); let offset = 0; for (const part of parts) { data.set(part, offset); offset += part.length; } return data; };
+function csf() {
+  const name = encoder.encode('NAME:E1');
+  const chars = '测试盟军大兵';
+  const text = new Uint8Array(chars.length * 2);
+  for (let i = 0; i < chars.length; i++) { const ch = chars.charCodeAt(i); text[i * 2] = (ch & 255) ^ 255; text[i * 2 + 1] = (ch >> 8) ^ 255; }
+  return combine(encoder.encode(' FSC'), u32(3), u32(1), u32(1), u32(0), u32(0), encoder.encode(' LBL'), u32(1), u32(name.length), name, encoder.encode(' RTS'), u32(chars.length), text);
+}
+function pcx() {
+  const header = new Uint8Array(128); const view = new DataView(header.buffer);
+  header[0] = 10; header[1] = 5; header[2] = 1; header[3] = 8; header[65] = 1;
+  view.setUint16(8, 2, true); view.setUint16(10, 1, true); view.setUint16(66, 4, true);
+  const palette = new Uint8Array(769); palette[0] = 12; palette.set([255, 0, 0], 4); palette.set([0, 255, 0], 7);
+  return combine(header, Uint8Array.of(0xc3,1,0,0xc2,2,1,0), palette);
+}
+function mix(name, body) {
+  const header = new Uint8Array(34); const view = new DataView(header.buffer);
+  view.setUint16(4, 2, true); view.setUint32(6, body.length, true);
+  view.setUint32(10, hashMixFilename(name), true); view.setUint32(14, 0, true); view.setUint32(18, body.length, true);
+  view.setUint32(22, hashMixFilename('sentinel.ini'), true); view.setUint32(26, 0xffffffff, true); view.setUint32(30, 0xffffffff, true);
+  return combine(header, body);
+}
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  const ids = Array.from({length:260}, (_, i) => `V${String(i).padStart(3, '0')}`);
+  const rules = '[InfantryTypes]\n0=E1\n[VehicleTypes]\n' + ids.map((id,i) => `${i}=${id}\n`).join('') + '[E1]\nName=Allied Infantry\nUIName=NAME:E1\nImage=GI\nStrength=100\n' + ids.map((id,i) => `[${id}]\nName=Vehicle ${i}\nStrength=300\n`).join('');
+  const transfer = new w.DataTransfer();
+  transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  transfer.items.add(new w.File([csf()], 'ra2md.csf'));
+  transfer.items.add(new w.File([mix('artmo.ini', encoder.encode('[GI]\nCameoPCX=giicon.pcx\n'))], 'expandmo99.mix'));
+  transfer.items.add(new w.File([mix('giicon.pcx', pcx())], 'expandmo98.mix'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', {bubbles:true}));
+  for (let i=0; i<150 && d.querySelector('.detail-name h2')?.textContent !== '测试盟军大兵'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === '测试盟军大兵', 'CSF name was not displayed');
+  for (let i=0; i<150 && !d.querySelector('.detail-icon img')?.naturalWidth; i++) await delay(10);
+  const img = d.querySelector('.detail-icon img');
+  check(img?.naturalWidth === 3 && img.naturalHeight === 2, 'MIX PCX image was not rendered');
+  const canvas = d.createElement('canvas'); canvas.width=3; canvas.height=2; canvas.getContext('2d').drawImage(img, 0, 0);
+  check(canvas.getContext('2d').getImageData(0,0,1,1).data[0] === 255, 'decoded icon palette is incorrect');
+  check(d.querySelector('.resource-status').textContent.includes('已加载 1 条'), 'resource status was not shown');
+  const unitList = d.querySelector('.unit-list'); unitList.scrollTop = 800; const position = unitList.scrollTop;
+  check(d.querySelectorAll('[data-entity]').length === 250, 'initial list limit incorrect');
+  d.querySelector('[data-action="load-more"]').click();
+  check(d.querySelectorAll('[data-entity]').length === 261, 'load more did not reveal all units');
+  check(d.querySelector('.unit-list').scrollTop === position, 'load more reset the list scroll');
+  let search = d.querySelector('#search'); search.value = 'Allied Infantry'; search.dispatchEvent(new w.Event('input',{bubbles:true}));
+  check(!!d.querySelector('[data-entity="E1"]'), 'English search failed with localized name');
+  search = d.querySelector('#search'); search.value = '测试盟军'; search.dispatchEvent(new w.Event('input',{bubbles:true}));
+  check(!!d.querySelector('[data-entity="E1"]'), 'Chinese search failed');
+  const strength = d.querySelector('[data-field="Strength"]'); strength.value='125'; strength.dispatchEvent(new w.Event('change',{bubbles:true}));
+  await delay(30);
+  check(d.querySelector('.detail-name h2').textContent === '测试盟军大兵', 'localized name was lost after editing');
+  check(d.querySelector('[data-entity="E1"] .unit-dirty'), 'edit was not marked');
+  result.textContent = 'PASS: CSF localization, MIX PCX icons, bilingual search, pagination, preserved scroll, and editing';
+ } catch (err) { result.textContent = 'FAIL: ' + err.stack; }
+});
+</script></body></html>

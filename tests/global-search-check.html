@@ -1,0 +1,75 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Global parameter search check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+  try {
+    const w = frame.contentWindow, d = frame.contentDocument;
+    await delay(80);
+    const search = query => {
+      const input = d.querySelector('#search');
+      input.value = query;
+      input.dispatchEvent(new w.Event('input', { bubbles: true }));
+    };
+    const resultFor = (section, field) => d.querySelector(`[data-global-section="${section}"][data-global-field="${field}"]`);
+
+    search('RepairSell');
+    check(!!resultFor('IQ', 'RepairSell'), 'demo did not find the global field by code from the default category');
+    search('建筑自动维修');
+    check(!!resultFor('IQ', 'RepairSell'), 'demo did not find the global field by Chinese name');
+    resultFor('IQ', 'RepairSell').click();
+    check(d.querySelector('.detail-name h2').textContent === '电脑智能等级', 'search result did not open its section');
+    check(d.querySelector('[data-field="RepairSell"]').value === '1', 'search result did not show the current value');
+    check(!d.querySelector('[data-field="RepairSell"]').closest('[data-global-row]').hidden, 'search target was hidden');
+    check(d.querySelector('.global-field-hint').textContent.includes('设为 0'), 'field explanation is missing');
+    check(d.querySelector('#global-search').value === 'RepairSell', 'search did not focus the matching field');
+
+    const rules = '[General]\nName=Test\nRepairRate=.03\n[IQ]\nrEpAiRsElL=1 ; keep\nSellBack=1\n[InfantryTypes]\n0=TESTUNIT\n[TESTUNIT]\nName=Test Unit\n';
+    const transfer = new w.DataTransfer();
+    transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+    const fileInput = d.querySelector('#file-input');
+    fileInput.files = transfer.files;
+    fileInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+    for (let i = 0; i < 200 && d.querySelector('.detail-name h2')?.textContent !== 'Test Unit'; i++) await delay(10);
+    check(d.querySelector('.detail-name h2')?.textContent === 'Test Unit', 'fixture did not load');
+
+    d.querySelector('[data-category="infantry"]').click();
+    search('repairSELL');
+    check(!!resultFor('IQ', 'rEpAiRsElL'), 'search should ignore the casing of keys and query');
+    check(resultFor('IQ', 'rEpAiRsElL').textContent.includes('1'), 'search result did not display its value');
+    resultFor('IQ', 'rEpAiRsElL').click();
+    const field = d.querySelector('[data-field="rEpAiRsElL"]');
+    check(field.value === '1' && d.activeElement === field, 'result did not focus the editable field');
+    field.value = '0';
+    field.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await delay(50);
+    check(d.querySelector('[data-field="rEpAiRsElL"]').value === '0', 'edit was not retained');
+    check(resultFor('IQ', 'rEpAiRsElL').textContent.includes('0'), 'search result did not update after edit');
+
+    let detailSearch = d.querySelector('#global-search');
+    detailSearch.value = '建筑自动修理';
+    detailSearch.dispatchEvent(new w.Event('input', { bubbles: true }));
+    check(!d.querySelector('[data-field="rEpAiRsElL"]').closest('[data-global-row]').hidden, 'in-section search did not find the alias');
+    search('维修');
+    check(!!resultFor('General', 'RepairRate') && !!resultFor('IQ', 'rEpAiRsElL'), 'global search did not search across sections');
+    search('不存在的参数');
+    check(!d.querySelector('[data-global-field]') && d.querySelector('.empty-list'), 'search reported a missing field');
+    search('Test Unit');
+    d.querySelector('[data-category="all"]').click();
+    search('Test Unit');
+    check(!!d.querySelector('[data-entity="TESTUNIT"]'), 'object search regressed');
+
+    d.querySelector('[data-action="changes"]').click();
+    let output;
+    w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; };
+    w.HTMLAnchorElement.prototype.click = function() {};
+    d.querySelector('[data-export="0"]').click();
+    check((await output.text()).includes('rEpAiRsElL=0 ; keep'), 'export did not preserve the edited field and comment');
+    result.textContent = 'PASS: cross-section global field search, Chinese aliases, direct editing, and export';
+  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

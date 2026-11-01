@@ -1,0 +1,70 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Field metadata check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  const rules = `[General]\nName=Test\nRepairRate=.03\n[IQ]\nRepairSell=1\n[VehicleTypes]\n0=TESTUNIT\n[WeaponTypes]\n0=TESTGUN\n[Warheads]\n0=TESTWH\n[SuperWeaponTypes]\n0=TESTSW\n[ArmorTypes]\ncustom=heavy\n[TESTUNIT]\nName=Unit\nStrength=300\nSpeed=5\nArmor=custom\nPrimary=TESTGUN\nWeapon3=TESTGUN\nUnlisted.Tag=untouched ; preserve\n[TESTGUN]\nName=Gun\nDamage=50\nSpeed=100\nRange=7\nProjectile=Shell\nWarhead=TESTWH\n[TESTWH]\nVerses=20%,30%,40%,50%,60%,70%,80%,90%,100%,110%,120%\nVersus.custom=70%\nVersus.custom.PassiveAcquire=no\n[TESTSW]\nName=Power\nType=GenericWarhead\nAction=Custom\nRechargeTime=5\nSW.Damage=50\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  for (let i = 0; i < 150 && d.querySelector('.detail-name h2')?.textContent !== 'Unit'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === 'Unit', 'fixture did not load');
+  const fieldLabel = key => d.querySelector(`[data-field="${key}"]`)?.closest('.field')?.querySelector('.field-label');
+  const rawLabel = key => d.querySelector(`[data-field="${key}"]`)?.closest('.raw-row')?.querySelector('.raw-key');
+  const choose = (category, id) => { d.querySelector(`[data-category="${category}"]`).click(); d.querySelector(`[data-entity="${id}"][data-type="${category}"]`).click(); };
+  let label = fieldLabel('Strength');
+  check(label?.textContent.includes('生命值 / Strength'), 'basic field did not show Chinese name and rule name');
+  check(label.title.includes('最大生命值'), 'basic field tooltip is missing');
+  check(d.querySelector('[data-field="Strength"]').getAttribute('aria-description').includes('最大生命值'), 'basic field description is not accessible');
+  label = d.querySelector('[data-key="Armor"]').closest('.field').querySelector('.field-label');
+  check(label.textContent.includes('装甲类型 / Armor') && label.title.includes('Verses'), 'selector field is missing metadata');
+  d.querySelector('[data-tab="raw"]').click();
+  check(rawLabel('Speed').textContent.includes('移动速度 / Speed') && rawLabel('Speed').title.includes('移动对象'), 'unit raw field metadata is incorrect');
+  check(rawLabel('Weapon3').textContent.includes('第 3 武器 / Weapon3'), 'numbered weapon metadata is missing');
+  label = rawLabel('Unlisted.Tag');
+  check(label.textContent.trim() === 'Unlisted.Tag' && !label.querySelector('.field-help'), 'unknown field received a guessed description');
+  d.querySelector('[data-tab="relations"]').click();
+  label = [...d.querySelectorAll('.ref-title')].find(item => item.textContent.includes('/ Primary'));
+  check(label?.textContent.includes('主武器') && label.title.includes('主武器'), 'reference field did not show its name and description');
+
+  choose('weapon', 'TESTGUN'); d.querySelector('[data-tab="raw"]').click();
+  check(rawLabel('Speed').textContent.includes('弹体速度 / Speed') && rawLabel('Speed').title.includes('弹体'), 'weapon Speed used the unit meaning');
+  check(rawLabel('Range').textContent.includes('射程 / Range'), 'weapon Range metadata is missing');
+
+  choose('warhead', 'TESTWH');
+  const first = d.querySelector('[data-verses-index="0"]').closest('.verses-item');
+  check(first.textContent.includes('/ Verses') && first.title.includes('第 1 项'), 'armor values have no Verses tooltip');
+  d.querySelector('#armor-overrides').open = true;
+  label = d.querySelector('[data-field="Versus.custom"]').closest('.armor-override-row').querySelector('.armor-field-label');
+  check(label.textContent.includes('装甲 custom 伤害倍率 / Versus.custom') && label.title.includes('伤害倍率'), 'custom armor metadata is missing');
+  d.querySelector('[data-tab="raw"]').click();
+  check(rawLabel('Versus.custom.PassiveAcquire').textContent.includes('装甲 custom 自动索敌'), 'armor targeting flag was not translated');
+
+  choose('superweapon', 'TESTSW');
+  label = fieldLabel('Action');
+  check(label.textContent.includes('瞄准动作 / Action') && label.title.includes('Custom'), 'superweapon Action description is missing');
+  check(fieldLabel('SW.Damage').title.includes('Type'), 'type-specific damage limitation is missing');
+  d.querySelector('[data-category="global"]').click(); d.querySelector('[data-entity="IQ"][data-type="global"]').click();
+  check(fieldLabel('RepairSell').title.includes('设为 0'), 'global setting description is missing');
+  check(fieldLabel('RepairSell').textContent.includes('/ RepairSell'), 'global setting rule name is missing');
+
+  d.querySelector('[data-category="sections"]').click();
+  const search = d.querySelector('#search'); search.value = 'TESTGUN'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-entity="TESTGUN"][data-type="sections"]').click();
+  check(fieldLabel('Speed').textContent.includes('弹体速度 / Speed'), 'all-sections view lost weapon context');
+  const speed = d.querySelector('[data-field="Speed"]'); speed.value = '90'; speed.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('[data-export="0"]').click();
+  const exported = await output.text();
+  check(exported.includes('Speed=90') && exported.includes('Unlisted.Tag=untouched ; preserve'), 'rendering metadata changed unrelated rules');
+  result.textContent = 'PASS: field names and hover descriptions across views, contexts, armor and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101715">
+  <title>心灵终结 · 规则工作台</title>
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <div id="app"></div>
+  <input id="file-input" type="file" accept=".ini,.map,.mpr,.yrm,.csf,.mix,.pcx,text/plain" multiple hidden>
+  <input id="folder-input" type="file" webkitdirectory multiple hidden>
+  <dialog id="changes-dialog" aria-labelledby="changes-title"></dialog>
+  <dialog id="editor-dialog" aria-labelledby="editor-title"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

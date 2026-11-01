@@ -1,0 +1,138 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Desktop save check</title></head><body>
+<pre id="result">RUNNING</pre><iframe id="subject" width="1200" height="800"></iframe>
+<script type="module">
+import { hashMixFilename } from '../src/resources.js';
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const encoder = new TextEncoder(), decoder = new TextDecoder();
+const bytes = text => encoder.encode(text);
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 500; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+async function hash(data) { return data ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(n => n.toString(16).padStart(2, '0')).join('') : null; }
+function mix(entries) {
+  const items = entries.map(([name, text]) => [name, bytes(text)]);
+  const start = 10 + items.length * 12, size = items.reduce((sum, [, data]) => sum + data.length, 0);
+  const buffer = new Uint8Array(start + size), view = new DataView(buffer.buffer);
+  view.setUint16(4, items.length, true); view.setUint32(6, size, true);
+  let offset = 0;
+  items.forEach(([name, data], index) => {
+    view.setUint32(10 + index * 12, hashMixFilename(name), true);
+    view.setUint32(14 + index * 12, offset, true); view.setUint32(18 + index * 12, data.length, true);
+    buffer.set(data, start + offset); offset += data.length;
+  });
+  return buffer;
+}
+const loose = new Map([
+  ['rulesmo.ini', bytes('[VehicleTypes]\n0=TANK\n[#include]\n0=include/units.ini\n')],
+  ['include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=100 ; keep\nStrength=300\n')],
+]);
+const packed = new Map([['expandmo99.mix', mix([
+  ['rulesmo.ini', '[VehicleTypes]\n0=PACKED\n[#include]\n0=units.ini\n'],
+  ['units.ini', '[PACKED]\nName=Packed Tank\nCost=200 ; packed\nStrength=300\n'],
+])]]);
+const output = new Map(), missing = new Map([['rulesmo.ini', bytes('[VehicleTypes]\n0=MISSING\n[#include]\n0=absent.ini\n[MISSING]\nName=Incomplete Tank\nCost=100\n')]]);
+const disks = { loose, packed, output, missing };
+const versions = { loose: [], packed: [], output: [], missing: [] }, transactions = new Map();
+let current = 'loose', nextTransaction = 0, remembered = '';
+const describe = id => ({ sessionId: id, directory: `D:\\${id}`, files: [...disks[id]].map(([path, data]) => ({ path, name: path.split('/').at(-1), size: data.byteLength })) });
+const snapshot = (disk, entries) => entries.map(entry => ({ path: entry.path, data: disk.has(entry.path) ? disk.get(entry.path).slice() : null }));
+const addVersion = (id, before, kind) => { const entry = { id: `v${++nextTransaction}`, createdMs: Date.now() + nextTransaction, kind, paths: before.map(item => item.path), before }; versions[id].unshift(entry); return entry; };
+window.mockInvoke = async (command, payload, options) => {
+  if (command === 'open_recent_directory') return null;
+  if (command === 'pick_game_directory') return describe(current);
+  if (command === 'pick_output_directory') return describe('output');
+  if (command === 'remember_directory') { remembered = payload.sessionId; return; }
+  if (command === 'refresh_game_files') return describe(payload.sessionId);
+  if (command === 'prepare_export_directories') return;
+  if (command === 'read_game_file') {
+    const data = disks[payload.sessionId].get(payload.path); if (!data) throw new Error('missing file');
+    return data.slice(payload.start, payload.end).buffer;
+  }
+  if (command === 'prepare_save') {
+    const disk = disks[payload.sessionId];
+    for (const entry of payload.entries) if (await hash(disk.get(entry.path)) !== entry.expectedHash) throw new Error(`${entry.path} 已在外部被修改`);
+    const id = `t${++nextTransaction}`;
+    transactions.set(id, { sessionId: payload.sessionId, entries: payload.entries, before: snapshot(disk, payload.entries), staged: [] });
+    return id;
+  }
+  if (command === 'stage_save_file') {
+    const tx = transactions.get(options.headers['x-transaction-id']);
+    check(tx && tx.sessionId === options.headers['x-session-id'], 'wrong binary upload session');
+    tx.staged[Number(options.headers['x-file-index'])] = new Uint8Array(payload).slice(); return;
+  }
+  if (command === 'commit_save') {
+    const tx = transactions.get(payload.transaction), disk = disks[tx.sessionId];
+    for (const entry of tx.entries) if (await hash(disk.get(entry.path)) !== entry.expectedHash) throw new Error('外部修改');
+    tx.entries.forEach((entry, index) => disk.set(entry.path, tx.staged[index])); addVersion(tx.sessionId, tx.before, 'save'); return;
+  }
+  if (command === 'list_versions') return versions[payload.sessionId];
+  if (command === 'restore_version') {
+    const disk = disks[payload.sessionId], version = versions[payload.sessionId].find(item => item.id === payload.version);
+    for (const entry of payload.expected) if (await hash(disk.get(entry.path)) !== entry.expectedHash) throw new Error(`外部修改 ${entry.path} actual=${await hash(disk.get(entry.path))} expected=${entry.expectedHash}`);
+    const before = snapshot(disk, payload.expected);
+    for (const item of version.before) { if (item.data) disk.set(item.path, item.data.slice()); else disk.delete(item.path); }
+    return addVersion(payload.sessionId, before, 'restore').id;
+  }
+  throw new Error(`Unexpected desktop command: ${command}`);
+};
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument; w.confirm = () => true;
+  await waitFor(() => !d.querySelector('#app').inert && d.querySelector('[data-action="folder"]'), 'desktop did not finish starting');
+  d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Desktop Tank', 'desktop folder did not open');
+  check(remembered === 'loose', 'game directory was not remembered');
+  check(d.querySelector('.resource-status').textContent.includes('D:\\loose'), 'save directory missing from UI');
+  let cost = d.querySelector('[data-field="Cost"]'); cost.value = '150'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="save"]').click();
+  await waitFor(() => decoder.decode(loose.get('include/units.ini')).includes('Cost=150 ; keep') && !d.querySelector('#app').inert, 'direct save did not complete');
+  check(versions.loose.length === 1, 'save did not create a backup');
+  check(d.querySelector('[data-action="changes"] .badge-count').textContent === '0', 'saved project remained dirty');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '180'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=170 ; external\n'));
+  d.querySelector('[data-action="save"]').click();
+  await waitFor(() => d.querySelector('#toast').textContent.includes('外部被修改') && !d.querySelector('#app').inert, 'external edit conflict was not reported');
+  check(d.querySelector('[data-field="Cost"]').value === '180' && decoder.decode(loose.get('include/units.ini')).includes('Cost=170'), 'conflict lost edits or overwrote the disk');
+  loose.set('include/units.ini', bytes('[TANK]\nName=Desktop Tank\nCost=150 ; keep\nStrength=300\n'));
+  d.querySelector('[data-action="save"]').click();
+  await waitFor(() => decoder.decode(loose.get('include/units.ini')).includes('Cost=180 ; keep') && !d.querySelector('#app').inert, 'second save failed');
+  d.querySelector('[data-action="history"]').click();
+  await waitFor(() => d.querySelector('[data-restore="0"]'), 'history was not displayed');
+  d.querySelector('[data-restore="0"]').click();
+  await waitFor(() => d.querySelector('[data-field="Cost"]')?.value === '150' && !d.querySelector('#app').inert, 'restore did not reload the original value');
+  check(versions.loose.length === 3, 'restoring did not back up the current file');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '160'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="save-as"]').click();
+  await waitFor(() => output.has('rulesmo.ini') && output.has('include/units.ini') && !d.querySelector('#app').inert, 'save as did not preserve included files');
+  check(decoder.decode(output.get('include/units.ini')).includes('Cost=160 ; keep'), 'save as lost the current change');
+  check(decoder.decode(loose.get('include/units.ini')).includes('Cost=150 ; keep'), 'save as modified the game directory');
+  check(d.querySelector('[data-action="changes"] .badge-count').textContent === '1', 'save as cleared edits in the original project');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '165'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="save-as"]').click();
+  await waitFor(() => versions.output.length === 2 && !d.querySelector('#app').inert, 'save as did not back up existing output');
+  check(decoder.decode(output.get('include/units.ini')).includes('Cost=165 ; keep'), 'save as did not replace the selected output');
+  check(decoder.decode(versions.output[0].before.find(item => item.path === 'include/units.ini').data).includes('Cost=160'), 'save as backup did not preserve previous output');
+  current = 'packed'; d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Packed Tank', 'MIX include was not loaded');
+  check(d.querySelector('[data-field="Cost"]').value === '200', 'MIX include value incorrect');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '230'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="save"]').click();
+  await waitFor(() => packed.has('rulesmo.ini') && packed.has('units.ini') && !d.querySelector('#app').inert, 'MIX save did not create loose rules');
+  check(decoder.decode(packed.get('units.ini')).includes('Cost=230 ; packed'), 'MIX include edit not written');
+  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('#changes-dialog').textContent.includes('rulesmo.ini') && d.querySelector('[data-restore="0"]'), 'MIX history missing');
+  d.querySelector('[data-restore="0"]').click();
+  try {
+    await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && d.querySelector('[data-field="Cost"]')?.value === '200' && !d.querySelector('#app').inert, 'restoring MIX source did not remove generated files');
+  } catch (error) {
+    throw new Error(`${error.message}: files=${[...packed.keys()].join(',')} cost=${d.querySelector('[data-field="Cost"]')?.value} toast=${d.querySelector('#toast').textContent}`);
+  }
+  current = 'missing'; d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Incomplete Tank', 'incomplete fixture did not open');
+  cost = d.querySelector('[data-field="Cost"]'); cost.value = '125'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
+  d.querySelector('[data-action="save"]').click();
+  check(d.querySelector('#toast').textContent.includes('加载不完整') && decoder.decode(missing.get('rulesmo.ini')).includes('Cost=100'), 'incomplete includes did not block saving');
+  result.textContent = 'PASS: desktop open, direct save, conflict protection, backup, restore, save as and MIX includes';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+frame.src = 'desktop-fixture.html';
+</script></body></html>

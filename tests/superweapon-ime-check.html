@@ -1,0 +1,94 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Superweapon and IME check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const enc = new TextEncoder();
+const u32 = value => { const data = new Uint8Array(4); new DataView(data.buffer).setUint32(0, value, true); return data; };
+const combine = (...parts) => { const data = new Uint8Array(parts.reduce((n, part) => n + part.length, 0)); let offset = 0; for (const part of parts) { data.set(part, offset); offset += part.length; } return data; };
+function csf(label, value) {
+  const name = enc.encode(label), text = new Uint8Array(value.length * 2);
+  for (let i = 0; i < value.length; i++) { const ch = value.charCodeAt(i); text[i * 2] = (ch & 255) ^ 255; text[i * 2 + 1] = (ch >> 8) ^ 255; }
+  return combine(enc.encode(' FSC'), u32(3), u32(1), u32(1), u32(0), u32(0), enc.encode(' LBL'), u32(1), u32(name.length), name, enc.encode(' RTS'), u32(value.length), text);
+}
+function pcx() {
+  const header = new Uint8Array(128), view = new DataView(header.buffer);
+  header[0] = 10; header[1] = 5; header[2] = 1; header[3] = 8; header[65] = 1;
+  view.setUint16(8, 2, true); view.setUint16(10, 1, true); view.setUint16(66, 4, true);
+  const palette = new Uint8Array(769); palette[0] = 12; palette.set([255, 0, 0], 4); palette.set([0, 255, 0], 7);
+  return combine(header, Uint8Array.of(0xc3,1,0,0xc2,2,1,0), palette);
+}
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  let search = d.querySelector('#search');
+  search.focus({ preventScroll: true });
+  search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+  for (const text of ['shi', '示', '示例']) {
+    search.value = text;
+    search.dispatchEvent(new w.InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: text, isComposing: true }));
+    check(search === d.querySelector('#search') && search.isConnected && d.activeElement === search, 'search input was replaced during IME composition');
+  }
+  search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '示例' }));
+  search.dispatchEvent(new w.InputEvent('input', { bubbles: true, inputType: 'insertText', data: '示例' }));
+  check(search.value === '示例' && !!d.querySelector('[data-entity="DEMO_VANGUARD"]'), 'committed Chinese text did not filter objects');
+
+  const rules = `[General]\nName=Fixture\n[Countries]\n0=A\n[A]\nName=Country A\n[BuildingTypes]\n0=FACTORY\n[SuperWeaponTypes]\n0=TESTSW\n1=SECOND\n2=MISSING\n[WeaponTypes]\n0=PAYLOAD\n[Warheads]\n0=TESTWH\n[FACTORY]\nName=Factory\nStrength=1000\nSuperWeapon=TESTSW\nSuperWeapons=SECOND, MYSTERY ; preserve\n[TESTSW]\nUIName=NAME:TESTSW\nName=Example Superweapon\nType=MultiMissile\nRechargeTime=4 ; keep\nIsPowered=true\nSidebarPCX=swicon.pcx\nSW.Range=3,3\nSW.Damage=250\nSW.Warhead=TESTWH\nNuke.Payload=PAYLOAD\nSW.RequiredHouses=A,UnknownCountry\n[SECOND]\nName=Second Power\nType=ParaDrop\nRechargeTime=8\n[PAYLOAD]\nDamage=30\nWarhead=TESTWH\n[TESTWH]\nVerses=100%,100%,100%,100%,100%,100%,100%,100%,100%,100%,100%\n`;
+  const files = new w.DataTransfer();
+  files.items.add(new w.File([rules], 'rulesmo.ini'));
+  files.items.add(new w.File([csf('NAME:TESTSW', '中文超级武器')], 'ra2md.csf'));
+  files.items.add(new w.File([pcx()], 'swicon.pcx'));
+  const input = d.querySelector('#file-input'); input.files = files.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  for (let i = 0; i < 150 && d.querySelector('.detail-name h2')?.textContent !== 'Factory'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === 'Factory', 'fixture did not load');
+  d.querySelector('[data-category="superweapon"]').click();
+  check(d.querySelector('[data-category="superweapon"] .count').textContent === '3', 'registered superweapons were not listed');
+  check(d.querySelector('.detail-name h2').textContent === '中文超级武器', 'superweapon Chinese name was not localized');
+  for (let i = 0; i < 150 && !d.querySelector('.detail-icon img')?.naturalWidth; i++) await delay(10);
+  check(d.querySelector('.detail-icon img')?.naturalWidth === 3, `SidebarPCX icon did not load without art.ini: ${d.querySelector('.detail-icon')?.outerHTML} ${JSON.stringify(d.querySelector('.detail-icon')?.getBoundingClientRect())} ${d.querySelector('.resource-status')?.textContent}`);
+  check(d.querySelector('[data-field="RechargeTime"]').value === '4', 'recharge time missing');
+  check(d.querySelector('[data-field="SW.Damage"]').value === '250', 'damage missing');
+  check(d.querySelector('[data-field="SW.Range"]').value === '3,3', 'range missing');
+  check(d.querySelector('select[data-field="IsPowered"]').value === 'true', 'boolean field is not editable');
+
+  search = d.querySelector('#search'); search.focus({ preventScroll: true });
+  search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true }));
+  const recharge = d.querySelector('[data-field="RechargeTime"]'); recharge.value = '6'; recharge.dispatchEvent(new w.Event('change', { bubbles: true }));
+  search.value = '中文'; search.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: '中文', isComposing: true }));
+  await delay(40);
+  check(search === d.querySelector('#search') && search.isConnected && d.activeElement === search, 'pending edit interrupted IME composition');
+  search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: '中文' }));
+  search.dispatchEvent(new w.InputEvent('input', { bubbles: true, data: '中文' }));
+  await delay(40);
+  check(d.querySelector('#search').value === '中文' && !!d.querySelector('[data-entity="TESTSW"]'), 'search was lost after deferred refresh');
+  check(d.querySelector('[data-field="RechargeTime"]').value === '6', 'superweapon edit was lost');
+  d.querySelector('[data-tab="relations"]').click();
+  check(!!d.querySelector('[data-jump="FACTORY"][data-type="building"]'), 'superweapon provider not found');
+  check(!!d.querySelector('[data-jump="PAYLOAD"][data-type="weapon"]'), 'payload reference not found');
+  d.querySelector('[data-jump="FACTORY"][data-type="building"]').click();
+  check(d.querySelector('[data-action="choose-options"][data-key="SuperWeapon"]').textContent.includes('中文超级武器'), 'building did not show its superweapon');
+  d.querySelector('[data-action="choose-options"][data-key="SuperWeapons"]').click();
+  const dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-choice="MYSTERY"]').checked, 'unknown superweapon was not preserved in selector');
+  let option = dialog.querySelector('[data-choice="SECOND"]'); option.checked = false; option.dispatchEvent(new w.Event('change', { bubbles: true }));
+  option = dialog.querySelector('[data-choice="TESTSW"]'); option.checked = true; option.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="SuperWeapons"]').value === 'MYSTERY,TESTSW', 'superweapon list did not preserve unknown values and order');
+  d.querySelector('[data-tab="relations"]').click();
+  check(!!d.querySelector('[data-jump="TESTSW"][data-type="superweapon"]'), 'building could not navigate to its superweapon');
+  d.querySelector('[data-jump="TESTSW"][data-type="superweapon"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '中文超级武器', 'building to superweapon navigation failed');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('[data-export="0"]').click();
+  const exported = await output.text();
+  check(exported.includes('RechargeTime=6 ; keep') && exported.includes('SuperWeapons=MYSTERY,TESTSW ; preserve'), 'superweapon changes were not exported safely');
+  result.textContent = 'PASS: IME composition, superweapon editing, localized PCX icons, references and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

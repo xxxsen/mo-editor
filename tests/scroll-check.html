@@ -1,0 +1,69 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Editor scroll check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="600"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  const unitIds = Array.from({length: 100}, (_, i) => `T${String(i).padStart(3, '0')}`);
+  const content = '[VehicleTypes]\n' + unitIds.map((id, i) => `${i}=${id}\n`).join('') + unitIds.map((id, i) => `[${id}]\nName=Unit ${i}\nStrength=100\nOwner=Allied\n`).join('');
+  const transfer = new w.DataTransfer();
+  transfer.items.add(new w.File([content], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input');
+  input.files = transfer.files;
+  input.dispatchEvent(new w.Event('change', {bubbles:true}));
+  for (let i = 0; i < 100 && !d.querySelector('[data-entity="T022"]'); i++) await delay(10);
+  const list = d.querySelector('.unit-list');
+  check(list.scrollHeight > list.clientHeight, 'fixture list is not scrollable');
+  list.scrollTop = 1200;
+  const listPosition = list.scrollTop;
+  w.scrollTo(0, 180);
+  const pagePosition = w.scrollY;
+  check(listPosition > 0 && pagePosition > 0, 'fixture failed to scroll');
+  const target = d.querySelector('[data-entity="T022"]');
+  target.focus({preventScroll:true});
+  target.click();
+  check(d.querySelector('.unit-list') === list, 'selecting an object replaced the list');
+  check(list.scrollTop === listPosition, 'object selection reset the list scroll');
+  check(w.scrollY === pagePosition, 'object selection reset the page scroll');
+  check(d.activeElement === target, 'object selection lost keyboard focus');
+  check(d.querySelector('.detail-name h2').textContent === 'Unit 22', 'object selection did not update details');
+  const field = d.querySelector('[data-field="Strength"]');
+  const nextTarget = d.querySelector('[data-entity="T023"]');
+  field.focus({preventScroll:true});
+  field.value = '555';
+  nextTarget.dispatchEvent(new w.PointerEvent('pointerdown', {bubbles:true}));
+  field.dispatchEvent(new w.Event('change', {bubbles:true}));
+  await delay(25);
+  check(nextTarget.isConnected, 'editing replaced the target before a pending click');
+  nextTarget.dispatchEvent(new w.PointerEvent('pointerup', {bubbles:true}));
+  nextTarget.click();
+  await delay(40);
+  check(d.querySelector('.detail-name h2').textContent === 'Unit 23', 'click after editing was lost');
+  const unload = new w.Event('beforeunload', {cancelable:true});
+  w.dispatchEvent(unload);
+  check(unload.defaultPrevented, 'refresh did not warn about modified rules');
+  check(d.querySelector('.unit-list').scrollTop === listPosition, 'editing reset the list scroll');
+  check(w.scrollY === pagePosition, 'editing reset the page scroll');
+  d.querySelector('[data-entity="T022"]').click();
+  check(d.querySelector('[data-field="Strength"]').value === '555', 'edit was lost while switching objects');
+  check(d.querySelector('[data-field="Strength"]').classList.contains('is-modified'), 'modified field is not marked');
+  check(d.querySelector('[data-entity="T022"] .unit-dirty'), 'modified object is not marked');
+  const search = d.querySelector('#search');
+  search.focus({preventScroll:true});
+  search.value = 'Unit 2';
+  search.setSelectionRange(3, 5);
+  search.dispatchEvent(new w.Event('input', {bubbles:true}));
+  const updatedSearch = d.querySelector('#search');
+  check(d.activeElement === updatedSearch, 'search lost focus');
+  check(updatedSearch.selectionStart === 3 && updatedSearch.selectionEnd === 5, 'search lost selection');
+  check(w.scrollY === pagePosition, 'search reset the page scroll');
+  result.textContent = 'PASS: object selection, list and page scroll, focus, edit then click, and search selection';
+ } catch (err) { result.textContent = 'FAIL: ' + err.stack; }
+});
+</script></body></html>

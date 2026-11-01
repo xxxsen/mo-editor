@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Editor browser check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  check(d.body.textContent.includes('示例先锋坦克'), 'demo did not render');
+  let owner = d.querySelector('#owner-filter'); owner.value = 'Epsilon'; owner.dispatchEvent(new w.Event('change', {bubbles:true}));
+  check(d.querySelectorAll('[data-entity]').length === 1 && d.querySelector('[data-entity]').dataset.entity === 'DEMO_WALKER', 'owner filter failed');
+  owner = d.querySelector('#owner-filter'); owner.value = ''; owner.dispatchEvent(new w.Event('change', {bubbles:true}));
+  let strength = d.querySelector('[data-field="Strength"]');
+  check(strength?.value === '400', 'effective include value not shown');
+  strength.value = '425'; strength.dispatchEvent(new w.Event('change', {bubbles:true}));
+  check(d.querySelector('[data-field="Strength"]').value === '425', 'changed value not shown');
+  d.querySelector('[data-tab="relations"]').click();
+  check(d.body.textContent.includes('主武器被 2 个'), 'shared weapon not flagged');
+  d.querySelector('[data-jump="DEMO_CANNON"]').click();
+  check(d.querySelector('[data-field="Damage"]')?.value === '70', 'weapon jump failed');
+  let damage = d.querySelector('[data-field="Damage"]');
+  damage.value = '77'; damage.dispatchEvent(new w.Event('change', {bubbles:true}));
+  d.querySelector('[data-action="changes"]').click();
+  check(d.querySelector('dialog').open, 'changes dialog did not open');
+  check(d.querySelectorAll('[data-export]').length === 2, 'expected two separate modified files');
+  check(d.querySelector('dialog').textContent.includes('425'), 'diff does not include edit');
+  let downloaded;
+  w.URL.createObjectURL = blob => { downloaded = blob; return 'blob:test'; };
+  w.HTMLAnchorElement.prototype.click = function() {};
+  const exports = [...d.querySelectorAll('[data-export]')];
+  const selected = exports.find(button => button.parentElement.textContent.includes('demo-units.ini'));
+  selected.click();
+  const text = await downloaded.text();
+  check(text.includes('Strength=425       ; 装甲耐久'), 'export did not preserve inline comment');
+  d.querySelector('[data-close]').click();
+  w.confirm = () => true;
+  const transfer = new w.DataTransfer();
+  transfer.items.add(new w.File(['[#include]\n0=unit.ini\n[VehicleTypes]\n0=TEST\n'], 'rulesmo.ini'));
+  transfer.items.add(new w.File(['[TEST]\nName=Imported Tank\nStrength=999\nCost=700\n'], 'unit.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', {bubbles:true}));
+  for (let i=0; i<100 && !d.body.textContent.includes('Imported Tank'); i++) await delay(10);
+  check(d.body.textContent.includes('Imported Tank'), 'import did not create object');
+  check(d.querySelector('[data-field="Strength"]')?.value === '999', 'imported include value incorrect');
+  result.textContent = 'PASS: demo, edit, shared references, navigation, diff, byte-preserving export, multi-file import';
+ } catch (err) { result.textContent = 'FAIL: ' + err.stack; }
+});
+</script></body></html>

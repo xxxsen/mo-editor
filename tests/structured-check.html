@@ -1,0 +1,103 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Structured rules editor check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  const extra = Array.from({length:150}, (_, i) => `Setting${i}=value${i}\n`).join('');
+  const rules = `[General]\nName=Example Rules\nBuildSpeed=.6\nTiberiumGrows=yes\n${extra}[Sides]\nGDI=A,B\nNod=C\n[Countries]\n0=A\n1=B\n2=C\n[A]\nName=Alpha Country\nSide=GDI\n[B]\nName=Beta Country\nSide=GDI\n[C]\nName=Gamma Country\nSide=Nod\n[ArmorTypes]\nshielded=heavy\n[GenericPrerequisites]\nALLWEAP=FACTORY\n[VehicleTypes]\n0=TESTUNIT\n[BuildingTypes]\n0=FACTORY\n[Warheads]\n0=TESTWH\n[TESTUNIT]\nName=Test Unit\nStrength=300\nArmor=shielded\nOwner=A, Mystery,B\nPrerequisite=ALLWEAP,UNKNOWNBUILD\nPrimary=TESTGUN\n[FACTORY]\nName=Factory\n[TESTGUN]\nDamage=50\nWarhead=TESTWH\n[TESTWH]\nVerses=20%, 30%,40%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve\nVersus.shielded=70%\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  for (let i=0; i<200 && d.querySelector('.detail-name h2')?.textContent !== 'Test Unit'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === 'Test Unit', 'fixture did not load');
+  let ownerFilter = d.querySelector('#owner-filter'); ownerFilter.value='@side:GDI'; ownerFilter.dispatchEvent(new w.Event('change',{bubbles:true}));
+  check(!!d.querySelector('[data-entity="TESTUNIT"]'), 'faction filter omitted matching unit');
+  ownerFilter = d.querySelector('#owner-filter'); ownerFilter.value='@side:Nod'; ownerFilter.dispatchEvent(new w.Event('change',{bubbles:true}));
+  check(!d.querySelector('[data-entity="TESTUNIT"]'), 'faction filter included nonmatching unit');
+  ownerFilter = d.querySelector('#owner-filter'); ownerFilter.value=''; ownerFilter.dispatchEvent(new w.Event('change',{bubbles:true}));
+  const workspaceHeight = d.querySelector('.workspace').getBoundingClientRect().height;
+  d.querySelector('[data-category="global"]').click();
+  check(d.querySelector('.detail-name h2')?.textContent === '常规设置', 'global settings entry missing');
+  check(!!d.querySelector('[data-entity="A"][data-type="global"]'), 'country settings were not exposed');
+  check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'workspace grew with global content');
+  let detail = d.querySelector('.detail-body');
+  check(detail.scrollHeight > detail.clientHeight, 'global content does not scroll inside the panel');
+  detail.scrollTop = 600; const scrollPosition = detail.scrollTop;
+  let field = d.querySelector('[data-field="Setting149"]'); field.value='edited'; field.dispatchEvent(new w.Event('change',{bubbles:true}));
+  await delay(40); detail = d.querySelector('.detail-body');
+  check(detail.scrollTop === scrollPosition, 'global edit reset detail scroll');
+  check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'editing changed workspace height');
+  const globalSearch = d.querySelector('#global-search'); globalSearch.value='Setting149'; globalSearch.dispatchEvent(new w.Event('input',{bubbles:true}));
+  check([...d.querySelectorAll('[data-global-row]')].filter(row => !row.hidden).length === 1, 'global search did not filter settings');
+  globalSearch.value=''; globalSearch.dispatchEvent(new w.Event('input',{bubbles:true}));
+  const flag = d.querySelector('select[data-field="TiberiumGrows"]'); flag.value='no'; flag.dispatchEvent(new w.Event('change',{bubbles:true})); await delay(40);
+  check(d.querySelector('select[data-field="TiberiumGrows"]').value === 'no', 'global boolean change failed');
+  d.querySelector('[data-action="add-field"]').click();
+  let addDialog=d.querySelector('#editor-dialog'); addDialog.querySelector('[data-editor-apply]').click();
+  check(addDialog.querySelector('[data-editor-error]')?.textContent.includes('请输入'), 'dialog validation error is not visible');
+  addDialog.querySelector('#new-field-name').value='ExtraGlobal'; addDialog.querySelector('#new-field-value').value='42'; addDialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="ExtraGlobal"]')?.value === '42', 'global custom field was not added');
+  d.querySelector('[data-category="all"]').click(); d.querySelector('[data-entity="TESTUNIT"][data-type="vehicle"]').click();
+  check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'workspace height changed after selection');
+  d.querySelector('[data-action="choose-options"][data-key="Owner"]').click();
+  let dialog=d.querySelector('#editor-dialog'); check(dialog.open, 'country chooser did not open');
+  check(dialog.querySelector('[data-choice="A"]').checked && dialog.querySelector('[data-choice="Mystery"]').checked, 'owner choices did not include existing unknown');
+  let option=dialog.querySelector('[data-choice="B"]'); option.checked=false; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  option=dialog.querySelector('[data-choice="C"]'); option.checked=true; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-action="choose-options"][data-key="Owner"]').textContent.includes('Gamma Country'), 'country selection did not update');
+  d.querySelector('[data-action="choose-options"][data-key="Armor"]').click(); dialog=d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-choice="shielded"]').checked, 'custom armor was not selected');
+  option=dialog.querySelector('[data-choice="light"]'); option.checked=true; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-action="choose-options"][data-key="Armor"]').textContent.includes('轻型装甲'), 'armor selection did not update');
+  d.querySelector('[data-action="choose-options"][data-key="Prerequisite"]').click(); dialog=d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-choice="UNKNOWNBUILD"]').checked, 'unknown prerequisite not preserved');
+  option=dialog.querySelector('[data-choice="FACTORY"]'); option.checked=true; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="Owner"]').value === 'A, Mystery,C', 'owner tokens were not preserved');
+  check(d.querySelector('[data-field="Prerequisite"]').value === 'ALLWEAP,UNKNOWNBUILD,FACTORY', 'prerequisite tokens were not preserved');
+  check(d.querySelector('[data-field="Armor"]').value === 'light', 'armor did not serialize to code');
+  d.querySelector('[data-category="warhead"]').click(); d.querySelector('[data-entity="TESTWH"][data-type="warhead"]').click();
+  check(d.querySelectorAll('[data-verses-index]').length === 11, 'eleven armor values were not separated');
+  field = d.querySelector('[data-verses-index="1"]'); field.value='45%'; field.dispatchEvent(new w.Event('change',{bubbles:true})); await delay(40);
+  let details=d.querySelector('#armor-overrides'); details.open=true; await delay(40);
+  check(details.querySelector('[data-field="Versus.shielded"]').value === '70%', 'custom armor override missing');
+  const armorSearch=d.querySelector('#armor-search'); armorSearch.value='shielded'; armorSearch.dispatchEvent(new w.Event('input',{bubbles:true}));
+  field=d.querySelector('[data-field="Versus.shielded"]'); field.value='80%'; field.dispatchEvent(new w.Event('change',{bubbles:true})); await delay(40);
+  details=d.querySelector('#armor-overrides'); check(details.open && details.querySelector('[data-field="Versus.shielded"]').value === '80%', 'custom armor editor did not retain state');
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="Verses"]').value === '20%, 45%,40%,50%,60%,70%,80%,90%,100%,110%,120%,444%', 'other armor values were changed');
+  const versesButton=d.querySelector('[data-action="edit-list"][data-key="Verses"]'); versesButton.click(); dialog=d.querySelector('#editor-dialog');
+  check(dialog.querySelectorAll('[data-list-index]').length === 12, 'ordered list editor dropped values');
+  dialog.querySelector('[data-editor-close]').click();
+  d.querySelector('[data-action="edit-list"][data-key="Verses"]').click(); dialog=d.querySelector('#editor-dialog');
+  const part=dialog.querySelector('[data-list-index="2"]'); part.value='bad,value'; part.dispatchEvent(new w.Event('input',{bubbles:true}));
+  dialog.querySelector('[data-editor-apply]').click(); check(dialog.querySelector('[data-editor-error]')?.textContent.includes('逗号'), 'list validation error is not visible');
+  part.value='41%'; part.dispatchEvent(new w.Event('input',{bubbles:true}));
+  dialog.querySelector('[data-move="down"][data-index="2"]').click(); dialog.querySelector('[data-move="up"][data-index="3"]').click();
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Verses"]').value === '20%, 45%,41%,50%,60%,70%,80%,90%,100%,110%,120%,444%', 'ordered list edit changed unrelated values');
+  d.querySelector('[data-category="sections"]').click();
+  const sectionSearch=d.querySelector('#search'); sectionSearch.value='TESTWH'; sectionSearch.dispatchEvent(new w.Event('input',{bubbles:true}));
+  d.querySelector('[data-entity="TESTWH"][data-type="sections"]').click();
+  check(d.querySelector('[data-field="Versus.shielded"]').value === '80%', 'all-sections browser could not open edited section');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('[data-export="0"]').click();
+  const exported = await output.text();
+  for (const text of ['ExtraGlobal=42', 'TiberiumGrows=no', 'Setting149=edited', 'Owner=A, Mystery,C', 'Armor=light', 'Prerequisite=ALLWEAP,UNKNOWNBUILD,FACTORY', 'Verses=20%, 45%,41%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve', 'Versus.shielded=80%']) {
+    check(exported.includes(text), `export omitted ${text}`);
+  }
+  check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'workspace grew with armor content');
+  result.textContent='PASS: fixed workspace, global settings, scroll, country and armor selection, prerequisites and damage values';
+ } catch (err) { result.textContent='FAIL: '+err.stack; }
+});
+</script></body></html>

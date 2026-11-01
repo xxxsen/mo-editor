@@ -1,0 +1,83 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Weapon warhead check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result');
+const frame = document.querySelector('#subject');
+if (new URLSearchParams(location.search).has('mobile')) frame.width = '390';
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  await delay(80);
+  // Bomb warheads are deliberately absent from [Warheads].
+  const rules = `[CombatDamage]\nIvanWarhead=GlobalBomb\nIvanDamage=420\nIvanTimedDelay=450\n[VehicleTypes]\n0=UNIT\n[WeaponTypes]\n0=Virusgun\n1=DEFAULTGUN\n2=SAMEGUN\n3=ORDINARY\n4=NONEGUN\n[Warheads]\n0=VirusAttach\n1=SharedWH\n[UNIT]\nName=Test Unit\nPrimary=Virusgun\n[Virusgun]\nName=Virus Gun\nDamage=200\nWarhead=VirusAttach\nIvanBomb.Warhead=VirusWH ; bomb warhead\nIvanBomb.Damage=200\nIvanBomb.Delay=160\nIvanBomb.Image=VIRSBOMB\n[DEFAULTGUN]\nName=Default Bomb Gun\nWarhead=VirusAttach\n[ORDINARY]\nName=Ordinary Gun\nWarhead=NormalWH\n[NONEGUN]\nName=No Bomb Gun\nWarhead=VirusAttach\nIvanBomb.Warhead=<none>\n[SAMEGUN]\nName=Shared Gun\nWarhead=SharedWH\nIvanBomb.Warhead=SharedWH\n[VirusAttach]\nIvanBomb=yes\nVerses=100%\n[VirusWH]\nCellSpread=1\n[GlobalBomb]\nCellSpread=2\n[AlternateBomb]\nCellSpread=3\n[SharedWH]\nIvanBomb=yes\n[NormalWH]\nVerses=100%\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  for (let i = 0; i < 150 && d.querySelector('.detail-name h2')?.textContent !== 'Test Unit'; i++) await delay(10);
+  check(d.querySelector('.detail-name h2')?.textContent === 'Test Unit', 'fixture did not load');
+  const choose = (category, id) => {
+    d.querySelector(`[data-category="${category}"]`).click();
+    const item = d.querySelector(`[data-entity="${id}"][data-type="${category}"]`);
+    check(item, `${category} ${id} was not discovered`);
+    item.click(); d.querySelector('[data-tab="basic"]').click();
+  };
+  const ref = key => [...d.querySelectorAll('.ref')].find(item => item.textContent.includes(`/ ${key}`));
+  const field = key => d.querySelector(`[data-field="${key}"]`);
+
+  choose('weapon', 'Virusgun');
+  check(field('Warhead').value === 'VirusAttach', 'direct warhead not editable in basic view');
+  check(field('IvanBomb.Warhead').value === 'VirusWH', 'bomb warhead not editable in basic view');
+  check(field('IvanBomb.Damage').value === '200' && field('IvanBomb.Delay').value === '160', 'bomb settings not shown');
+  check(field('IvanBomb.Warhead').closest('.field').querySelector('.field-label').title.includes('IvanBomb=yes'), 'bomb activation condition missing');
+  d.querySelector('[data-tab="relations"]').click();
+  check(ref('Warhead')?.querySelector('[data-jump="VirusAttach"]'), 'direct warhead link missing');
+  check(ref('IvanBomb.Warhead')?.querySelector('[data-jump="VirusWH"]'), 'bomb warhead link missing');
+  ref('IvanBomb.Warhead').querySelector('[data-jump="VirusWH"]').click();
+  d.querySelector('[data-tab="relations"]').click();
+  let reverse = d.querySelector('[data-jump="Virusgun"]')?.closest('.ref');
+  check(reverse?.textContent.includes('炸弹爆炸弹头'), 'bomb warhead reverse link or role missing');
+
+  choose('weapon', 'DEFAULTGUN');
+  check(field('IvanBomb.Warhead').value === '', 'global default was written into the weapon field');
+  check(d.querySelector('.detail-body').textContent.includes('[CombatDamage]IvanWarhead = GlobalBomb'), 'global default provenance missing');
+  d.querySelector('[data-tab="relations"]').click();
+  let bomb = ref('IvanBomb.Warhead');
+  check(bomb?.textContent.includes('沿用 [CombatDamage]IvanWarhead') && bomb.querySelector('[data-jump="GlobalBomb"]'), 'global bomb warhead not linked');
+  bomb.querySelector('[data-jump="GlobalBomb"]').click(); d.querySelector('[data-tab="relations"]').click();
+  reverse = d.querySelector('[data-jump="DEFAULTGUN"]')?.closest('.ref');
+  check(reverse?.textContent.includes('全局默认'), 'default warhead reverse provenance missing');
+  check(!d.querySelector('[data-jump="NONEGUN"]'), 'explicit none was treated as a global fallback');
+  check(!d.querySelector('[data-jump="ORDINARY"]'), 'ordinary weapon was treated as a bomb');
+
+  choose('warhead', 'SharedWH'); d.querySelector('[data-tab="relations"]').click();
+  const shared = d.querySelectorAll('[data-jump="SAMEGUN"]');
+  check(shared.length === 1, 'the same weapon was counted twice for one warhead');
+  check(shared[0].closest('.ref').textContent.includes('命中弹头、炸弹爆炸弹头'), 'shared-warhead roles were not distinguished');
+
+  choose('weapon', 'ORDINARY');
+  check(!field('IvanBomb.Warhead'), 'ordinary weapon gained bomb fields');
+  choose('weapon', 'Virusgun');
+  field('IvanBomb.Warhead').value = 'AlternateBomb';
+  field('IvanBomb.Warhead').dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  d.querySelector('[data-tab="relations"]').click();
+  check(ref('IvanBomb.Warhead')?.querySelector('[data-jump="AlternateBomb"]'), 'edited bomb reference was not refreshed');
+  ref('IvanBomb.Warhead').querySelector('[data-jump="AlternateBomb"]').click(); d.querySelector('[data-tab="relations"]').click();
+  check(d.querySelector('[data-jump="Virusgun"]'), 'edited bomb reference was not reversible');
+  d.querySelector('[data-jump="Virusgun"]').click();
+  field('IvanBomb.Warhead').value = ''; field('IvanBomb.Warhead').dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  d.querySelector('[data-tab="relations"]').click();
+  check(ref('IvanBomb.Warhead')?.querySelector('[data-jump="GlobalBomb"]'), 'clearing an override did not restore the global default');
+  d.querySelector('[data-tab="basic"]').click();
+  field('IvanBomb.Warhead').value = 'AlternateBomb'; field('IvanBomb.Warhead').dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('[data-export="0"]').click();
+  const exported = await output.text();
+  check(exported.includes('IvanBomb.Warhead=AlternateBomb ; bomb warhead'), 'edited bomb warhead lost its inline comment');
+  check(exported.includes('[DEFAULTGUN]\nName=Default Bomb Gun\nWarhead=VirusAttach\n[ORDINARY]'), 'default was inserted into the original weapon');
+  check(exported.includes('Warhead=VirusAttach') && exported.includes('IvanBomb.Damage=200'), 'unrelated settings changed');
+  result.textContent = 'PASS: explicit and default bomb warheads, editing, bidirectional references, deduplication and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>
