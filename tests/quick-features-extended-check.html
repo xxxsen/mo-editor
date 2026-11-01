@@ -1,0 +1,123 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Extended quick features check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 400; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[Countries]\n0=AAA\n1=BBB\n[AAA]\nName=测试国家甲\n[BBB]\nName=测试国家乙\n[InfantryTypes]\n0=VIRUS\n1=E1\n2=E2\n[VehicleTypes]\n0=TANK\n1=OTHER\n[BuildingTypes]\n0=HOUSE\n1=BARRACKS\n[WeaponTypes]\n0=Virusgun\n1=VirusgunE\n2=DeathGun\n[SuperWeaponTypes]\n0=SW1\n1=SW2\n[VIRUS]\nName=病毒狙击手\nOwner=AAA,UnknownHouse\nPrimary=Virusgun\nElitePrimary=VirusgunE\nSecondary=Virusgun\nCost=1000\nSize=1\n[E1]\nName=士兵甲\nSize=1\n[E2]\nName=士兵乙\nSize=2\n[TANK]\nName=运输坦克\nPassengers=2\nSizeLimit=1\nOpenTopped=yes\nInitialPayload.Types=E1, E2\nInitialPayload.Nums=2\n[OTHER]\nName=其他坦克\nPrimary=Virusgun\n[HOUSE]\nName=测试建筑\nPrimary=DeathGun\nCanBeOccupied=no\nMaxNumberOccupants=2\nProduceCashAmount=10 ; income\n[BARRACKS]\nName=测试兵营\n[SW1]\nName=测试超武一\nType=IronCurtain\nRechargeTime=5\nAction=IronCurtain\n[SW2]\nName=测试超武二\nType=Custom\nRechargeTime=7\nAction=Custom\n[Virusgun]\nDamage=200\nProjectile=Invisible\nWarhead=VirusAttach\nFireInTransport=no ; normal\nCustom=yes\n[VirusgunE]\nDamage=220\nProjectile=Invisible\nWarhead=VirusAttach\nFireInTransport=no ; elite\n[DeathGun]\nDamage=500\nWarhead=ExplosionWH\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('[data-entity="HOUSE"]'), 'fixture did not load');
+  const open = (id, feature) => {
+    d.querySelector(`[data-entity="${id}"]`).click(); d.querySelector('[data-action="quick-feature"]').click();
+    const dialog = d.querySelector('#editor-dialog'), type = dialog.querySelector('#quick-feature-type');
+    type.value = feature; type.dispatchEvent(new w.Event('change', { bubbles: true }));
+    check(type.value === feature, `feature ${feature} missing on ${id}`); return dialog;
+  };
+  const field = (dialog, key) => dialog.querySelector(`[data-quick-field="${key}"]`);
+  const selectFeature = (dialog, id) => { const type = dialog.querySelector('#quick-feature-type'); type.value = id; type.dispatchEvent(new w.Event('change', { bubbles: true })); };
+  const pick = (dialog, opener, query, ids, composition = false) => {
+    opener.click(); const search = dialog.querySelector('[data-quick-picker-search]');
+    if (composition) search.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: 'zhong' }));
+    search.value = query; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+    if (composition) search.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true, data: query }));
+    check(search.isConnected && !dialog.querySelector('[data-quick-picker]').hidden, 'picker search lost focus or was replaced');
+    for (const id of ids) { const option = dialog.querySelector(`[data-quick-option="${id}"]`); check(option, `missing choice ${id}`); option.checked = true; option.dispatchEvent(new w.Event('change', { bubbles: true })); }
+    dialog.querySelector('[data-quick-picker-apply]').click();
+  };
+  const preview = dialog => dialog.querySelector('[data-quick-next]').click();
+  const apply = dialog => { preview(dialog); check(!dialog.querySelector('[data-quick-preview]').hidden, `preview failed: ${dialog.querySelector('[data-editor-error]')?.textContent}`); dialog.querySelector('[data-quick-apply]').click(); };
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+
+  let dialog = open('HOUSE', 'garrison');
+  check(dialog.querySelector('[data-garrison-weapon-warning]')?.textContent.includes('Primary=DeathGun'), 'armed building warning missing');
+  preview(dialog); check(dialog.querySelector('[data-quick-preview]').textContent.includes('原有武器'), 'armed building warning missing from preview');
+  dialog.querySelector('[data-quick-back]').click(); selectFeature(dialog, 'income');
+  check(field(dialog, 'ProduceCashAmount').value === '10' && field(dialog, 'ProduceCashDelay').value === '100', 'income defaults or existing values incorrect');
+  field(dialog, 'ProduceCashAmount').value = '25'; field(dialog, 'ProduceCashStartup').value = '-50'; field(dialog, 'ProduceCashDisplay').value = 'yes';
+  selectFeature(dialog, 'stealth-building'); field(dialog, 'Cloakable.Powered').value = 'yes';
+  selectFeature(dialog, 'income'); check(field(dialog, 'ProduceCashAmount').value === '25', 'switching features lost the draft');
+  const before = count(); preview(dialog); check(count() === before && dialog.querySelector('[data-quick-preview]').textContent.includes('ProduceCashAmount'), 'income preview changed draft or omitted fields');
+  dialog.querySelector('[data-quick-back]').click(); apply(dialog);
+  d.querySelector('[data-tab="raw"]').click(); check(d.querySelector('[data-field="ProduceCashAmount"]').value === '25', 'income not applied');
+
+  dialog = open('HOUSE', 'stealth-building'); field(dialog, 'Cloakable.Powered').value = 'yes'; apply(dialog);
+  dialog = open('HOUSE', 'detection-building'); field(dialog, 'SensorsSight').value = '9'; apply(dialog);
+  dialog = open('HOUSE', 'superweapon');
+  pick(dialog, dialog.querySelector('[data-quick-choose="SuperWeapon"]'), '测试超武一', ['SW1'], true);
+  check(field(dialog, 'SuperWeapon').value === 'SW1' && dialog.querySelector('[data-quick-info="SuperWeapon"]').textContent.includes('RechargeTime=5'), 'superweapon detail not shown');
+  pick(dialog, dialog.querySelector('[data-quick-choose="SuperWeapons"]'), 'SW2', ['SW2']);
+  check(dialog.querySelector('[data-quick-info="SuperWeapons"]').textContent.includes('Action=Custom'), 'custom superweapon detail missing');
+  apply(dialog);
+
+  dialog = open('TANK', 'stealth'); field(dialog, 'CloakStop').value = 'yes'; field(dialog, 'CloakingSpeed').value = '1'; apply(dialog);
+  dialog = open('TANK', 'detection'); field(dialog, 'SensorsSight').value = '8'; field(dialog, 'Sensors').value = 'no'; apply(dialog);
+  dialog = open('TANK', 'death');
+  pick(dialog, dialog.querySelector('[data-quick-choose="DeathWeapon"]'), 'DeathGun', ['DeathGun']);
+  check(dialog.querySelector('[data-quick-info="DeathWeapon"]').textContent.includes('Damage=500') && dialog.querySelector('[data-quick-info="DeathWeapon"]').textContent.includes('Warhead=ExplosionWH'), 'death weapon detail missing');
+  apply(dialog);
+
+  dialog = open('TANK', 'payload');
+  let rows = [...dialog.querySelectorAll('[data-payload-row]')];
+  check(rows.length === 2 && rows[0].querySelector('[data-payload-id]').value === 'E1' && rows[1].querySelector('[data-payload-count]').value === '2', 'existing passenger counts not expanded');
+  preview(dialog); check(dialog.querySelector('[data-quick-preview]').textContent.includes('没有产生修改'), 'unchanged payload was normalized');
+  dialog.querySelector('[data-quick-back]').click(); rows.forEach(row => row.querySelector('[data-payload-remove]').click());
+  preview(dialog); check(!dialog.querySelector('[data-quick-preview]').hidden && dialog.querySelector('[data-quick-preview]').textContent.includes('InitialPayload.Nums'), 'removing every passenger did not clear both payload fields');
+  dialog.querySelector('[data-editor-close]').click(); dialog = open('TANK', 'payload');
+  dialog.querySelector('[data-payload-add]').click();
+  rows = [...dialog.querySelectorAll('[data-payload-row]')];
+  pick(dialog, rows[2].querySelector('[data-payload-choose]'), '病毒', ['VIRUS'], true);
+  preview(dialog);
+  check(dialog.querySelector('[data-quick-preview]').textContent.includes('Passengers=2') && dialog.textContent.includes('SizeLimit'), 'capacity and size warnings missing');
+  dialog.querySelector('[data-quick-back]').click(); apply(dialog);
+  d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="InitialPayload.Types"]').value === 'E1,E2,VIRUS' && d.querySelector('[data-field="InitialPayload.Nums"]').value === '2,2,1', 'payload did not preserve order and counts');
+
+  dialog = open('VIRUS', 'protection');
+  check(field(dialog, 'ImmuneToRadiation').value === '', 'unset immunity did not retain engine default');
+  field(dialog, 'ImmuneToEMP').value = 'yes'; field(dialog, 'ImmuneToPsionics').value = 'no'; apply(dialog);
+  dialog = open('VIRUS', 'availability');
+  let owner = dialog.querySelector('[data-quick-choose="Owner"]');
+  pick(dialog, owner, '测试国家乙', ['BBB'], true);
+  check(field(dialog, 'Owner').value === 'AAA,UnknownHouse,BBB', 'country picker lost unknown existing value');
+  pick(dialog, dialog.querySelector('[data-quick-choose="Prerequisite"]'), '测试兵营', ['BARRACKS']);
+  field(dialog, 'TechLevel').value = '-1'; field(dialog, 'BuildLimit').value = '-1';
+  preview(dialog); check(dialog.querySelector('[data-quick-preview]').textContent.includes('TechLevel'), 'buildability warning missing');
+  dialog.querySelector('[data-quick-back]').click(); apply(dialog);
+
+  dialog = open('VIRUS', 'veterancy'); field(dialog, 'Trainable').value = 'yes';
+  pick(dialog, dialog.querySelector('[data-quick-choose="EliteAbilities"]'), 'EMP', ['EMPIMMUNE']);
+  pick(dialog, dialog.querySelector('[data-quick-choose="VeteranAbilities"]'), '自动回血', ['SELF_HEAL'], true);
+  check(field(dialog, 'EliteAbilities').value === 'EMPIMMUNE' && field(dialog, 'VeteranAbilities').value === 'SELF_HEAL', 'abilities not selected');
+  apply(dialog);
+
+  dialog = open('TANK', 'passenger-fire');
+  pick(dialog, dialog.querySelector('[data-passenger-choose]'), '病毒', ['VIRUS'], true);
+  check(dialog.textContent.includes('[OTHER]Primary') && dialog.textContent.includes('FireInTransport：no'), 'passenger diagnostics omitted shared references or values');
+  let gun = dialog.querySelector('[data-fire-weapon="Virusgun"]'), elite = dialog.querySelector('[data-fire-weapon="VirusgunE"]');
+  gun.value = 'yes'; elite.value = 'yes';
+  dialog.querySelector('[data-fire-mode]').value = 'direct'; preview(dialog);
+  check(dialog.querySelector('[data-quick-preview]').textContent.includes('[OTHER]Primary') && dialog.textContent.includes('[VirusgunE]'), 'direct edit preview did not warn about shared users');
+  dialog.querySelector('[data-quick-back]').click(); dialog.querySelector('[data-fire-mode]').value = 'copy';
+  const pending = count(); preview(dialog);
+  check(count() === pending && dialog.querySelector('[data-quick-preview]').textContent.includes('复制武器') && dialog.textContent.includes('WeaponTypes'), 'copy preview failed or mutated the project');
+  dialog.querySelector('[data-quick-apply]').click();
+  d.querySelector('[data-entity="VIRUS"]').click(); d.querySelector('[data-tab="raw"]').click();
+  check(d.querySelector('[data-field="Primary"]').value === 'Virusgun_OT' && d.querySelector('[data-field="ElitePrimary"]').value === 'VirusgunE_OT' && d.querySelector('[data-field="Secondary"]').value === 'Virusgun_OT', 'cloned weapon links were not applied');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  for (const item of ['ProduceCashAmount=25 ; income', 'ProduceCashStartup=-50', 'SensorArray=yes', 'SensorsSight=9', 'InitialPayload.Types=E1,E2,VIRUS', 'InitialPayload.Nums=2,2,1', 'ImmuneToEMP=yes', 'Owner=AAA,UnknownHouse,BBB', 'EliteAbilities=EMPIMMUNE', 'SuperWeapons=SW2', '[Virusgun_OT]', 'FireInTransport=yes ; normal', 'Primary=Virusgun ;', 'Custom=yes']) {
+    if (item === 'Primary=Virusgun ;') { check(saved.includes('[OTHER]\nName=其他坦克\nPrimary=Virusgun'), 'other unit was altered'); continue; }
+    check(saved.includes(item), `export missing ${item}`);
+  }
+  check(saved.includes('[Virusgun]\nDamage=200') && saved.includes('FireInTransport=no ; normal'), 'original weapon was modified during cloning');
+  result.textContent = 'PASS: new feature forms, searchable pickers, payload, compatibility warning, shared-weapon preview, clone and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

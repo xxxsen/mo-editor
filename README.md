@@ -67,7 +67,13 @@ py -m http.server 4173 --bind 127.0.0.1
 
 对象列表的「新增」和对象详情的「复制并新建」支持步兵、载具、飞机、建筑、武器、投射物、弹头、超级武器及普通规则段。可搜索模板或空白创建，预览规则段、类型登记及保留的引用后加入当前修改；还需点击「保存」才会写入文件。游戏对象的 ID 限制为 24 个字符，建议 ID 会自动缩短；普通规则段不受此限制。类型登记追加到已有列表末尾；没有对应列表时会创建列表。对于投射物，该列表用于编辑器管理，游戏效果仍需武器引用。
 
-载具和建筑详情提供「快捷功能」，可集中设置载具运输／车内开火或建筑驻军。表单带入当前已配置的值和未保存修改，缺少的必要字段显示可调整的建议值，可选字段留空则不写入。预览会列出新增与覆盖的字段及文件来源，并提示已配置的部分限制；确认后加入当前草稿，仍需保存才写入。载具使用 `Passengers`、`SizeLimit`、`PipScale`、`OpenTopped` 等字段，建筑驻军使用 `CanBeOccupied`、`MaxNumberOccupants`、`CanOccupyFire`，实际效果也受乘员、建筑美术、武器及其他规则影响。已有的乘员限制和其他未列出的字段不会自动改动；具体机制见 [Ares 乘员规则](https://ares-developers.github.io/Ares-docs/new/passengers.html)和[初始乘员与驻军](https://ares-developers.github.io/Ares-docs/new/initialpayload.html)。
+单位和建筑详情提供按类型区分的「快捷功能」，包括运输、建筑驻军、自动产钱、隐形、反隐与探测、防护免疫、初始乘员、建造条件、晋升与精英武器、死亡爆炸和建筑提供超级武器。表单带入已有值和未保存修改；缺少的必要字段显示可调整的建议值，可选字段留空不会自动写入。预览列出新增、修改或移除的字段及其文件来源，确认后加入当前草稿，仍需点击「保存」才会写入。
+
+载具运输使用 `Passengers`、`SizeLimit`、`PipScale`、`OpenTopped` 等字段；建筑驻军使用 `CanBeOccupied`、`MaxNumberOccupants`、`CanOccupyFire`。已有武器的建筑配置驻军时，表单和预览会提示建筑原有武器可能失效。初始乘员可逐项选择类型和数量，并按已配置的容量、体型等信息提示限制；不会自动改动其他运输或建筑字段。具体机制见 [Ares 乘员规则](https://ares-developers.github.io/Ares-docs/new/passengers.html)和[初始乘员与驻军](https://ares-developers.github.io/Ares-docs/new/initialpayload.html)。
+
+「乘员车内开火诊断」可从步兵或载具入口检查乘员普通、精英及编号武器的 `FireInTransport` 和已识别的使用者，并提示载具条件。可选择直接修改共享武器，或复制武器后只替换该乘员的相关武器槽；复制后的弹头、投射物及其他引用仍共享。实际开火仍受载具、目标和其他游戏规则影响。
+
+免疫项目支持保留或恢复游戏默认值。选择恢复默认或清空可选择字段时，会移除所有已加载文件中该规则段的同名定义，预览逐一列出这些变更；加载不完整时不能安全移除。地图、模式或未加载规则仍可能覆盖默认值。建筑自带隐形、建筑探测器、初始乘员及额外超级武器等功能需要对应 Ares 支持，不同类型的生效条件不同。
 
 复制只创建所选对象，武器、弹头、投射物及其他引用默认继续共享。可以逐个复制这些关联对象，再通过字段旁的「选择」替换引用；复制前已编辑但未保存的值也会保留。复制单位时，未指定 `Image` 会自动复用模板图像；`UIName` 沿用模板，不会创建新的中文字符串或美术资源。空白对象需自行补充游戏需要的属性，单位能否建造和超级武器能否使用还取决于相应规则。
 
@@ -106,7 +112,7 @@ py -m http.server 4173 --bind 127.0.0.1
 
 可添加字段目录由 `src/field-catalog.js` 汇总现有字段字典和当前项目的同类对象字段；编号类字段支持按规则手动输入，扩展装甲字段会根据当前项目生成。`tests/field-catalog-check.html` 覆盖缺失字段搜索、空白待编辑项、结构化选项和导出。
 
-快捷功能的适用类型、字段和建议值集中维护在 `src/quick-features.js`。`tests/quick-features.test.js` 和 `tests/quick-features-check.html` 覆盖字段预填、修改预览、取消、原有草稿及导出。
+快捷功能的适用类型、字段、建议值和预览校验集中维护在 `src/quick-features.js`。`tests/quick-features*.test.js`、`tests/quick-features*-check.html` 和 `tests/quick-default-reset-check.html` 覆盖字段预填、中文搜索、驻军武器提醒、乘员容量、共享武器复制、多文件恢复默认、预览取消及导出。
 
 ```sh
 npm test

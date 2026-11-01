@@ -1,0 +1,49 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Quick feature default reset check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = '[#include]\n0=extra.ini\n[Countries]\n0=AAA\n1=BBB\n[AAA]\nName=Alpha\n[BBB]\nName=Beta\n[InfantryTypes]\n0=VIRUS\n[VIRUS]\nName=Virus\nImmuneToEMP=no ; old\nOwner=AAA,,BBB\nCost=100\n';
+  const extra = '[VIRUS]\nImmuneToEMP=yes ; effective\nOwner=BBB,,AAA\nOther=keep\n';
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini')); transfer.items.add(new w.File([extra], 'extra.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Virus', 'fixture did not load');
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  const open = (feature = 'protection') => {
+    d.querySelector('[data-action="quick-feature"]').click(); const dialog = d.querySelector('#editor-dialog'), type = dialog.querySelector('#quick-feature-type');
+    type.value = feature; type.dispatchEvent(new w.Event('change', { bubbles: true })); return dialog;
+  };
+  let dialog = open('availability'), owner = dialog.querySelector('[data-quick-field="Owner"]');
+  dialog.querySelector('[data-quick-choose="Owner"]').click(); dialog.querySelector('[data-quick-picker-apply]').click();
+  check(owner.value === 'BBB,,AAA', 'opening and confirming the picker altered an unusual original list');
+  dialog.querySelector('[data-quick-choose="Owner"]').click(); dialog.querySelector('[data-quick-picker-clear]').click(); dialog.querySelector('[data-quick-picker-apply]').click();
+  check(owner.value === '', 'clearing the entire selection kept empty comma tokens');
+  dialog.querySelector('[data-quick-next]').click();
+  check(!dialog.querySelector('[data-quick-preview]').hidden && dialog.textContent.includes('移除定义') && count() === 0, 'clearing the list did not preview removal of duplicate definitions');
+  dialog.querySelector('[data-editor-close]').click();
+  dialog = open(); let field = dialog.querySelector('[data-quick-field="ImmuneToEMP"]');
+  check(field.value === 'yes' && [...field.options].some(option => option.value === '' && option.textContent.includes('默认')), 'default state or effective value missing');
+  field.value = ''; dialog.querySelector('[data-quick-next]').click();
+  const preview = dialog.querySelector('[data-quick-preview]');
+  check(!preview.hidden && preview.textContent.includes('rulesmo.ini') && preview.textContent.includes('extra.ini') && preview.textContent.includes('移除定义') && count() === 0, 'preview did not show both removed definitions');
+  dialog.querySelector('[data-editor-close]').click();
+  dialog = open(); field = dialog.querySelector('[data-quick-field="ImmuneToEMP"]'); check(field.value === 'yes' && count() === 0, 'cancel removed a field');
+  field.value = ''; dialog.querySelector('[data-quick-next]').click(); dialog.querySelector('[data-quick-apply]').click();
+  check(count() === 2, 'both removed definitions were not tracked');
+  d.querySelector('[data-tab="raw"]').click(); check(!d.querySelector('[data-field="ImmuneToEMP"]'), 'removed field remains visible');
+  d.querySelector('[data-action="changes"]').click(); const changes = d.querySelector('#changes-dialog');
+  check(changes.textContent.includes('已移除') && changes.querySelectorAll('[data-export]').length === 2, 'removed fields or export files missing');
+  const blobs = []; w.URL.createObjectURL = blob => { blobs.push(blob); return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  for (const button of changes.querySelectorAll('[data-export]')) button.click();
+  const output = await Promise.all(blobs.map(blob => blob.text()));
+  check(output.some(text => text.includes('[#include]') && text.includes('Cost=100') && !text.includes('ImmuneToEMP=')), 'main file retained removed definition or lost unrelated data');
+  check(output.some(text => text.includes('Other=keep') && !text.includes('ImmuneToEMP=')), 'included file retained removed definition or lost unrelated data');
+  result.textContent = 'PASS: default reset previews and removes every loaded duplicate, preserves cancel and exports both files';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

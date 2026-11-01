@@ -9,7 +9,7 @@ async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if 
 frame.addEventListener('load', async () => {
  try {
   const w = frame.contentWindow, d = frame.contentDocument;
-  const main = `[VehicleTypes]\n0=TANK\n[BuildingTypes]\n0=HOUSE\n[InfantryTypes]\n0=FOOT\n[TANK]\nName=Tank\nCost=100\nPassengers=2 ; keep\nOpenTopped=no\nPipScale=Ammo\nNoManualEnter=yes\nPassengers.Allowed=FOOT\nCustomField=yes ; preserve\n[HOUSE]\nName=House\nCanBeOccupied=no\nMaxNumberOccupants=3\nCanOccupyFire=false\nSelectable=no\n[FOOT]\nName=Foot\n`;
+  const main = `[VehicleTypes]\n0=TANK\n[BuildingTypes]\n0=HOUSE\n[InfantryTypes]\n0=FOOT\n[TANK]\nName=Tank\nCost=100\nPassengers=2 ; keep\nOpenTopped=no\nPipScale=Ammo\nNoManualEnter=yes\nPassengers.Allowed=FOOT\nCustomField=yes ; preserve\n[HOUSE]\nName=House\nPrimary=HouseGun\nCanBeOccupied=no\nMaxNumberOccupants=3\nCanOccupyFire=false\nSelectable=no\n[FOOT]\nName=Foot\n`;
   const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini'));
   const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
   await waitFor(() => d.querySelector('[data-entity="TANK"]'), 'fixture did not load');
@@ -54,16 +54,20 @@ frame.addEventListener('load', async () => {
   d.querySelector('[data-category="building"]').click();
   await waitFor(() => d.querySelector('[data-entity="HOUSE"]'), 'building missing');
   d.querySelector('[data-entity="HOUSE"]').click(); d.querySelector('[data-action="quick-feature"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-garrison-weapon-warning]')?.textContent.includes('Primary=HouseGun'), 'armed building warning missing from form');
   check(dialog.querySelector('#quick-feature-type').value === 'garrison' && field('CanBeOccupied').value === 'no' && field('MaxNumberOccupants').value === '3' && field('CanOccupyFire').value === 'false', 'building fields not prefilled');
   check(!field('Passengers') && !field('OpenTopped'), 'vehicle-only fields appeared on building');
   field('CanBeOccupied').value = 'yes'; field('MaxNumberOccupants').value = '7'; field('CanOccupyFire').value = 'true';
   dialog.querySelector('[data-quick-next]').click();
-  check(dialog.textContent.includes('Selectable'), 'building restriction not reported');
+  check(dialog.textContent.includes('Selectable') && dialog.querySelector('[data-quick-preview]').textContent.includes('原有武器'), 'building restriction or armed-garrison conflict not reported');
   dialog.querySelector('[data-quick-apply]').click();
   d.querySelector('[data-tab="raw"]').click();
   check(d.querySelector('[data-field="MaxNumberOccupants"]').value === '7' && d.querySelector('[data-field="CanBeOccupied"]').value === 'yes' && !d.querySelector('[data-field="Passengers"]'), 'building configuration not applied');
   d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="FOOT"]').click();
-  check(!d.querySelector('[data-action="quick-feature"]'), 'unsupported infantry has quick feature button');
+  check(d.querySelector('[data-action="quick-feature"]'), 'infantry quick features are missing');
+  d.querySelector('[data-action="quick-feature"]').click(); dialog = d.querySelector('#editor-dialog');
+  check([...dialog.querySelector('#quick-feature-type').options].some(option => option.value === 'protection'), 'infantry protection feature is missing');
+  dialog.querySelector('[data-editor-close]').click();
   d.querySelector('[data-action="changes"]').click();
   let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
   d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();

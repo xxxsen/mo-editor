@@ -81,6 +81,42 @@ test('new properties go into the last loaded section and can be removed', () => 
   assert.equal(project.changes().length, 0);
 });
 
+test('removing a field clears all loaded definitions, keeps other bytes, and tracks each changed file', () => {
+  const main = file('rulesmo.ini', '[#include]\r\n0=extra.ini\r\n[U]\r\nImmuneToEMP=no ; original\r\nName=Test\r\n');
+  const extra = file('extra.ini', '[U]\nImmuneToEMP=yes ; later\n[U]\nImmuneToEMP=no ; effective\nOther=keep\n');
+  const unused = file('unused.ini', '[U]\nImmuneToEMP=yes\n');
+  const project = new IniProject([main, extra, unused]);
+  project.set('U', 'ImmuneToEMP', 'yes');
+  const originals = project.files.map(serialize);
+  const candidate = project.fork();
+  const removed = candidate.remove('u', 'immunetoemp');
+  assert.equal(removed.length, 3);
+  assert.deepEqual(project.files.map(serialize), originals);
+  assert.equal(project.get('U', 'ImmuneToEMP').value, 'yes');
+  assert.equal(candidate.get('U', 'ImmuneToEMP'), undefined);
+  assert.equal(candidate.changes().filter(change => change.kind === 'remove').length, 3);
+  assert.equal(d.decode(serialize(candidate.files[0])), '[#include]\r\n0=extra.ini\r\n[U]\r\nName=Test\r\n');
+  assert.equal(d.decode(serialize(candidate.files[1])), '[U]\n[U]\nOther=keep\n');
+  assert.deepEqual(serialize(candidate.files[2]), serialize(unused));
+  const reloaded = new IniProject(candidate.files.map(item => parseFile(item.name, serialize(item), item.path)));
+  assert.equal(reloaded.get('U', 'ImmuneToEMP'), undefined);
+  candidate.set('U', 'ImmuneToEMP', 'no');
+  assert.equal(candidate.get('U', 'ImmuneToEMP').value, 'no');
+  assert.match(d.decode(serialize(candidate.files[1])), /ImmuneToEMP=no/);
+});
+
+test('removing a new property restores a header without a newline and rejects incomplete loads', () => {
+  const project = new IniProject([file('rulesmo.ini', '[U]')]);
+  project.set('U', 'ImmuneToEMP', 'yes');
+  project.remove('U', 'ImmuneToEMP');
+  assert.equal(d.decode(serialize(project.files[0])), '[U]');
+  assert.equal(project.changes().length, 0);
+  const incomplete = new IniProject([file('rulesmo.ini', '[#include]\n0=missing.ini\n[U]\nImmuneToEMP=yes\n')]);
+  const before = serialize(incomplete.files[0]);
+  assert.throws(() => incomplete.remove('U', 'ImmuneToEMP'), /加载不完整/);
+  assert.deepEqual(serialize(incomplete.files[0]), before);
+});
+
 test('unsafe multiline and UTF-16 data are rejected', () => {
   const project = new IniProject([file('x.ini','[U]\nName=Test\n')]);
   assert.throws(() => project.set('U','Name','a;b'), /分号/);

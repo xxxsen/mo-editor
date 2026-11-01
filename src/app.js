@@ -7,7 +7,7 @@ import { availableFields } from './field-catalog.js';
 import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
-import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature } from './quick-features.js';
+import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature, garrisonWeaponWarning, passengerWeapons, preparePassengerFire } from './quick-features.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 
@@ -72,7 +72,7 @@ const CATEGORIES = [
 const labelFor = type => CATEGORIES.find(item => item.id === type)?.label || '对象';
 const unitTypes = new Set(['infantry', 'vehicle', 'aircraft', 'building']);
 const objectTypes = new Set([...unitTypes, 'superweapon', 'weapon', 'projectile', 'warhead']);
-const weaponKey = key => /^(primary|secondary|eliteprimary|elitesecondary|occupyweapon|eliteoccupyweapon|weapon\d+|eliteweapon\d+)$/i.test(key);
+const weaponKey = key => /^(primary|secondary|eliteprimary|elitesecondary|occupyweapon|eliteoccupyweapon|deathweapon|weapon\d+|eliteweapon\d+)$/i.test(key);
 
 function buildEntities() {
   const project = state.project;
@@ -1261,10 +1261,32 @@ function showEditorError(message) {
 }
 editorDialog.addEventListener('input', () => editorDialog.querySelector('[data-editor-error]')?.remove());
 
+function quickChoiceKind(type) {
+  return ({ countryList: 'country', prerequisiteList: 'prerequisite', abilities: 'abilities', weapon: 'weapon', superweapon: 'superweapon', superweapons: 'superweapons' })[type] || '';
+}
+function quickChoiceOptions(kind, value, passengerTypes = ['infantry', 'vehicle']) {
+  if (kind !== 'passenger') return choicesFor(kind, value);
+  const choices = state.entities.filter(item => passengerTypes.includes(item.type) && item.exists).map(item => ({ id: item.id, label: item.name, group: labelFor(item.type) }));
+  const known = new Set(choices.map(item => lower(item.id)));
+  for (const id of String(value || '').split(',').map(item => item.trim()).filter(Boolean)) if (!known.has(lower(id))) {
+    choices.push({ id, label: id, group: '当前未找到的对象' }); known.add(lower(id));
+  }
+  return choices;
+}
+function quickChoiceText(kind, value) {
+  const values = String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+  if (!values.length) return '未设置，点击选择';
+  const choices = new Map(quickChoiceOptions(kind, value).map(option => [lower(option.id), option]));
+  return values.slice(0, 3).map(id => {
+    const label = choices.get(lower(id))?.label || id;
+    return lower(label) === lower(id) ? id : `${label} [${id}]`;
+  }).join('、') + (values.length > 3 ? ` 等 ${values.length} 项` : '');
+}
 function quickFieldControl(field) {
-  const value = String(field.value ?? '');
+  const value = String(field.value ?? ''), kind = quickChoiceKind(field.type);
   const attr = `data-quick-field="${h(field.key)}" aria-label="${h(field.key)}"`;
-  if (field.type === 'integer') return `<input ${attr} type="text" inputmode="numeric" value="${h(value)}" autocomplete="off" placeholder="${field.required ? '请输入整数' : '留空不设置'}">`;
+  if (kind) return `<input type="hidden" ${attr} value="${h(value)}"><button type="button" class="choice-trigger quick-choice" data-quick-choose="${h(field.key)}" data-quick-kind="${h(kind)}" aria-label="选择 ${h(field.key)}"><span>${h(quickChoiceText(kind, value))}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button><div class="quick-reference-info" data-quick-info="${h(field.key)}"></div>`;
+  if (field.type === 'integer' || field.type === 'signed') return `<input ${attr} type="text" inputmode="${field.type === 'signed' ? 'text' : 'numeric'}" value="${h(value)}" autocomplete="off" placeholder="${field.required ? '请输入整数' : '留空不设置'}">`;
   let options;
   if (field.type === 'boolean') {
     const truthy = /^(yes|true|1)$/i.test(value), falsy = /^(no|false|0)$/i.test(value);
@@ -1274,8 +1296,19 @@ function quickFieldControl(field) {
   } else {
     options = enumChoices('pipScale', value).map(option => ({ id: lower(option.id) === lower(value) ? value : option.id, label: `${option.label} / ${option.id}` }));
   }
-  if (!value) options.unshift({ id: '', label: field.required ? '请选择' : '未设置（保持不变）' });
+  if (!value || field.allowClear) options.unshift({ id: '', label: value ? '使用默认值（移除已加载的定义）' : field.required ? '请选择' : '未设置（使用默认值）' });
   return `<select ${attr}>${options.map(option => `<option value="${h(option.id)}" ${option.id === value ? 'selected' : ''}>${h(option.label)}</option>`).join('')}</select>`;
+}
+function quickReferenceInfo(project, kind, raw) {
+  if (!['weapon', 'superweapon', 'superweapons'].includes(kind)) return '';
+  const ids = String(raw || '').split(',').map(item => item.trim()).filter(id => id && !/^(none|<none>)$/i.test(id));
+  if (!ids.length) return '';
+  return ids.map(id => {
+    if (!project.section(id)) return `[${id}] 未找到定义`;
+    const fields = kind === 'weapon' ? ['Damage', 'Warhead'] : ['Type', 'RechargeTime', 'Action'];
+    const values = fields.map(key => `${key}=${project.get(id, key)?.value || '未配置'}`).join(' · ');
+    return `[${id}] ${values}`;
+  }).join('\n');
 }
 
 function openQuickFeature() {
@@ -1284,60 +1317,191 @@ function openQuickFeature() {
   if (!selected || !project.section(section)) return;
   const entity = actualEntity(selected), features = quickFeaturesFor(entity.type);
   if (!features.length) return;
-  let plan = null;
-  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">添加快捷功能</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-quick-form><p>为 <strong>${h(sectionTitle(entity))} [${h(section)}]</strong> 配置功能。已配置字段会显示当前值，确认后会覆盖这些值。</p><div class="editor-fields"><label>选择功能<select id="quick-feature-type">${features.map(feature => `<option value="${h(feature.id)}">${h(feature.label)}</option>`).join('')}</select></label><div data-quick-details></div></div></div><div data-quick-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-quick-back hidden>返回修改</button><button type="button" class="btn primary" data-quick-next>预览修改</button><button type="button" class="btn primary" data-quick-apply hidden>确认添加</button></div>`;
+  let plan = null, activeFeature = '', pickerState = null;
+  const drafts = new Map();
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">添加快捷功能</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-quick-form><p>为 <strong>${h(sectionTitle(entity))} [${h(section)}]</strong> 配置功能。已配置字段会显示当前值，确认后会覆盖这些值。</p><div class="editor-fields"><label>选择功能<select id="quick-feature-type">${features.map(feature => `<option value="${h(feature.id)}">${h(feature.label)}</option>`).join('')}</select></label><div data-quick-details></div></div></div><div data-quick-picker hidden><p data-quick-picker-title></p><div class="search-wrap">${icon('search', 15)}<input class="search" data-quick-picker-search type="search" placeholder="搜索中文名称或代码..." aria-label="搜索选项"></div><div class="option-toolbar"><span data-quick-picker-count></span><button type="button" class="text-action" data-quick-picker-clear>清空选择</button></div><div class="option-list" data-quick-picker-list></div></div><div data-quick-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-quick-picker-back hidden>返回</button><button type="button" class="btn primary" data-quick-picker-apply hidden>应用选择</button><button type="button" class="btn" data-quick-back hidden>返回修改</button><button type="button" class="btn primary" data-quick-next>预览修改</button><button type="button" class="btn primary" data-quick-apply hidden>确认添加</button></div>`;
   const form = editorDialog.querySelector('[data-quick-form]'), preview = editorDialog.querySelector('[data-quick-preview]');
   const type = editorDialog.querySelector('#quick-feature-type'), details = editorDialog.querySelector('[data-quick-details]');
   const next = editorDialog.querySelector('[data-quick-next]'), back = editorDialog.querySelector('[data-quick-back]'), apply = editorDialog.querySelector('[data-quick-apply]');
+  const picker = editorDialog.querySelector('[data-quick-picker]'), pickerSearch = editorDialog.querySelector('[data-quick-picker-search]');
+  const pickerList = editorDialog.querySelector('[data-quick-picker-list]'), pickerCount = editorDialog.querySelector('[data-quick-picker-count]');
+  const pickerBack = editorDialog.querySelector('[data-quick-picker-back]'), pickerApply = editorDialog.querySelector('[data-quick-picker-apply]');
   const feature = () => features.find(item => item.id === type.value);
-  function drawFields() {
-    const current = feature();
-    const fields = quickFeatureFields(project, section, current);
-    const rows = fields.map(field => {
-      const info = fieldInfoFor(entity, field.key);
-      const source = field.current ? `已有值 · ${sourceName(field.current.file)}${field.current.line.patch !== undefined ? ' · 未保存' : ''}` : field.required ? '未配置 · 建议值' : '未配置 · 留空不写入';
-      return `<label class="quick-field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.key)}${quickFieldControl(field)}<span class="quick-field-source" title="${h(source)}">${h(source)}</span></label>`;
+  const split = value => String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+  const equalList = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+  function fieldSource(field) {
+    return field.current ? `已有值 · ${sourceName(field.current.file)}${field.current.line.patch !== undefined ? ' · 未保存' : ''}` : field.required ? '未配置 · 建议值' : '未配置 · 留空不写入';
+  }
+  function fieldMarkupQuick(field) {
+    const info = fieldInfoFor(entity, field.key), source = fieldSource(field), isChoice = !!quickChoiceKind(field.type);
+    const element = isChoice ? 'div' : 'label';
+    return `<${element} class="quick-field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.key)}${quickFieldControl(field)}<span class="quick-field-source" title="${h(source)}">${h(source)}</span></${element}>`;
+  }
+  function payloadRow(id = '', count = '1') {
+    const label = id ? quickChoiceText('passenger', id) : '选择乘员';
+    return `<div class="quick-payload-row" data-payload-row><button type="button" class="choice-trigger quick-choice" data-payload-choose aria-label="选择初始乘员"><span>${h(label)}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button><input type="hidden" data-payload-id value="${h(id)}"><label>数量<input data-payload-count inputmode="numeric" value="${h(count)}" aria-label="乘员数量"></label><button type="button" class="split-button" data-payload-remove aria-label="移除乘员">×</button></div>`;
+  }
+  function payloadMarkup(fields) {
+    const types = fields.find(field => field.key === 'InitialPayload.Types'), nums = fields.find(field => field.key === 'InitialPayload.Nums');
+    const ids = split(types.value), counts = split(nums.value);
+    const rows = ids.map((id, index) => payloadRow(id, counts.length ? counts[Math.min(index, counts.length - 1)] : '1')).join('');
+    return `<div class="quick-payload" data-quick-payload data-original-types="${h(types.value)}" data-original-nums="${h(nums.value)}"><div class="quick-payload-heading">${fieldNameMarkup(fieldInfoFor(entity, types.key), types.key)} ${fieldNameMarkup(fieldInfoFor(entity, nums.key), nums.key)}</div><p class="quick-field-source">类型：${h(fieldSource(types))}；数量：${h(fieldSource(nums))}</p><div data-payload-rows>${rows}</div><button type="button" class="btn sm" data-payload-add>＋ 添加乘员</button><p class="create-note">按行选择类型和数量；可保留同一类型的多行。数量未配置时按 Ares 默认每项 1 个显示。</p></div>`;
+  }
+  function passengerMarkup() {
+    const id = entity.type === 'infantry' ? section : '';
+    return `<div class="quick-passenger"><p class="create-note">${entity.type === 'vehicle' ? '选择要检查的乘员；当前载具的开放式运输设置会在预览中检查。' : '检查当前步兵的普通、精英和编号武器。'}</p>${entity.type === 'vehicle' ? `<button type="button" class="choice-trigger quick-choice" data-passenger-choose aria-label="选择要检查的乘员"><span>选择乘员</span><span class="choice-arrow">${icon('chevron', 14)}</span></button>` : `<p class="quick-passenger-current">当前乘员：[${h(section)}]</p>`}<input type="hidden" data-passenger-id value="${h(id)}"><div data-passenger-weapons></div><label class="quick-mode">武器修改方式<select data-fire-mode><option value="copy">为此乘员复制武器并替换引用</option><option value="direct">直接修改现有武器（影响所有使用者）</option></select></label><p class="create-note">复制只替换此乘员的武器槽，复制后的武器仍共享原弹头、投射物等引用；在其他开放式载具内也会使用该武器。</p></div>`;
+  }
+  function drawPassengerWeapons(root) {
+    const id = root.querySelector('[data-passenger-id]')?.value || '', area = root.querySelector('[data-passenger-weapons]');
+    if (!area) return;
+    const weapons = passengerWeapons(project, id);
+    area.innerHTML = !id ? '<p class="create-note">选择乘员后显示其武器。</p>' : !weapons.length ? '<p class="create-note">没有找到该乘员的普通、精英或编号武器。</p>' : weapons.map(weapon => {
+      const status = weapon.field ? `${weapon.field.value || '空值'} · ${sourceName(weapon.field.file)}` : '未配置 · 使用游戏默认值';
+      const refs = weapon.references.length ? weapon.references.slice(0, 5).map(ref => `[${ref.section}]${ref.key}`).join('、') : '未找到引用';
+      return `<div class="quick-fire-row"><div><strong>${h(weapon.id)}</strong><small>武器槽：${h(weapon.slots.join('、'))}</small><small>FireInTransport：${h(status)}</small><small>已识别 ${weapon.references.length} 处引用：${h(refs)}${weapon.references.length > 5 ? ' 等' : ''}</small>${weapon.exists ? '' : '<small>未找到武器定义，无法修改</small>'}</div><select data-fire-weapon="${h(weapon.id)}" aria-label="${h(weapon.id)} 车内开火" ${weapon.exists ? '' : 'disabled'}><option value="">保持原值</option><option value="yes">允许车内开火</option><option value="no">禁止车内开火</option></select></div>`;
     }).join('');
-    const extra = current.id === 'transport' ? '已有的乘员允许／禁止名单、炮手等规则不会自动修改；预览会提示可能的限制。' : '建筑美术，以及步兵的 Occupier、OccupyWeapon 和 EliteOccupyWeapon 等条件不会自动修改。';
-    details.innerHTML = `<p class="create-note">${h(current.description)}</p><div class="quick-fields">${rows}</div><p class="create-note quick-feature-note">${h(extra)} 可选项留空时不会新增字段。</p>`;
+  }
+  function updateReferenceInfo(root) {
+    root.querySelectorAll('[data-quick-info]').forEach(info => {
+      const key = info.dataset.quickInfo, field = [...root.querySelectorAll('[data-quick-field]')].find(input => input.dataset.quickField === key);
+      const kind = field?.parentElement.querySelector('[data-quick-kind]')?.dataset.quickKind;
+      info.textContent = quickReferenceInfo(project, kind, field?.value);
+    });
+  }
+  function drawFields() {
+    if (activeFeature) drafts.set(activeFeature, [...details.childNodes]);
+    const current = feature(); activeFeature = current.id;
+    if (drafts.has(current.id)) { details.replaceChildren(...drafts.get(current.id)); return; }
+    if (current.kind === 'passenger-fire') {
+      details.innerHTML = passengerMarkup(); drawPassengerWeapons(details); return;
+    }
+    const fields = quickFeatureFields(project, section, current);
+    const rows = current.id === 'payload' ? payloadMarkup(fields) : `<div class="quick-fields">${fields.map(fieldMarkupQuick).join('')}</div>`;
+    const weaponWarning = current.id === 'garrison' ? garrisonWeaponWarning(project, section) : '';
+    details.innerHTML = `<p class="create-note">${h(current.description)}</p>${weaponWarning ? `<div class="quick-warnings quick-inline-warning" data-garrison-weapon-warning><strong>武器兼容性提醒</strong><p>${h(weaponWarning)}</p></div>` : ''}${rows}<p class="create-note quick-feature-note">${h(current.note || '')} 未配置的可选项不会自动写入。</p>`;
+    updateReferenceInfo(details);
+  }
+  function drawPicker() {
+    const q = lower(pickerSearch.value.trim());
+    const matches = pickerState.options.filter(option => !q || lower([option.id, option.label, option.group, option.hint].join(' ')).includes(q));
+    const ordered = [...matches.filter(option => pickerState.selected.has(lower(option.id))), ...matches.filter(option => !pickerState.selected.has(lower(option.id)))];
+    const shown = ordered.slice(0, 200), groups = new Map();
+    for (const option of shown) {
+      if (!groups.has(option.group)) groups.set(option.group, []);
+      groups.get(option.group).push(option);
+    }
+    pickerList.innerHTML = [...groups.entries()].map(([group, items]) => `<div class="option-group"><div class="option-group-title"><span>${h(group || '可选项')}</span></div><div class="option-grid">${items.map(option => `<label class="option-row"${option.hint ? ` title="${h(option.hint)}"` : ''}><input type="${pickerState.multiple ? 'checkbox' : 'radio'}" name="quick-choice" data-quick-option="${h(option.id)}" ${pickerState.selected.has(lower(option.id)) ? 'checked' : ''}><span><strong>${h(option.label)}</strong><small>${lower(option.label) === lower(option.id) ? '' : h(option.id)}${option.hint ? ` · ${h(option.hint)}` : ''}</small></span></label>`).join('')}</div></div>`).join('') || '<div class="empty-list">没有匹配的选项。</div>';
+    if (matches.length > shown.length) pickerList.insertAdjacentHTML('beforeend', `<p class="option-limit">显示前 ${shown.length} 项，请输入关键词缩小范围。</p>`);
+    pickerCount.textContent = `已选择 ${pickerState.selected.size} 项`;
+  }
+  function openPicker(kind, raw, multiple, title, onApply, passengerTypes) {
+    const ids = multiple ? split(raw) : raw ? [raw] : [];
+    pickerState = { kind, raw, multiple, onApply, dirty: false, selected: new Map(ids.map(id => [lower(id), id])), options: quickChoiceOptions(kind, raw, passengerTypes) };
+    editorDialog.querySelector('[data-quick-picker-title]').textContent = title;
+    pickerSearch.value = ''; form.hidden = true; picker.hidden = false; next.hidden = true; pickerBack.hidden = false; pickerApply.hidden = false;
+    editorDialog.querySelector('[data-editor-error]')?.remove();
+    drawPicker(); pickerSearch.focus({ preventScroll: true });
+  }
+  function closePicker() {
+    picker.hidden = true; form.hidden = false; pickerBack.hidden = true; pickerApply.hidden = true; next.hidden = false; pickerState = null;
+    type.focus({ preventScroll: true });
+  }
+  pickerSearch.addEventListener('input', () => { if (pickerState) drawPicker(); });
+  pickerList.addEventListener('change', event => {
+    const input = event.target, id = input.dataset.quickOption;
+    if (id === undefined || !pickerState) return;
+    pickerState.dirty = true;
+    if (!pickerState.multiple) pickerState.selected.clear();
+    if (enumDefinition(pickerState.kind)) selectEnumOption(pickerState.kind, pickerState.selected, id, input.checked);
+    if (input.checked) pickerState.selected.set(lower(id), id); else pickerState.selected.delete(lower(id));
+    pickerCount.textContent = `已选择 ${pickerState.selected.size} 项`;
+  });
+  editorDialog.querySelector('[data-quick-picker-clear]').addEventListener('click', () => { pickerState.selected.clear(); pickerState.dirty = true; drawPicker(); });
+  pickerBack.addEventListener('click', closePicker);
+  pickerApply.addEventListener('click', () => {
+    const chosen = [...pickerState.selected.values()];
+    const value = !pickerState.dirty ? pickerState.raw : pickerState.multiple ? (chosen.length ? mergeSelections(pickerState.raw, chosen) : '') : chosen[0] || '';
+    pickerState.onApply(value); closePicker();
+  });
+  details.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    if (button.dataset.quickChoose !== undefined) {
+      const key = button.dataset.quickChoose, kind = button.dataset.quickKind;
+      const input = [...details.querySelectorAll('[data-quick-field]')].find(item => item.dataset.quickField === key);
+      const multiple = ['country', 'prerequisite', 'abilities', 'superweapons'].includes(kind);
+      openPicker(kind, input.value, multiple, `选择 ${fieldInfoFor(entity, key).label} / ${key}`, value => {
+        input.value = value; button.querySelector('span').textContent = quickChoiceText(kind, value); updateReferenceInfo(details);
+      });
+    } else if (button.dataset.payloadAdd !== undefined) {
+      details.querySelector('[data-payload-rows]').insertAdjacentHTML('beforeend', payloadRow());
+    } else if (button.dataset.payloadRemove !== undefined) {
+      button.closest('[data-payload-row]').remove();
+    } else if (button.dataset.payloadChoose !== undefined) {
+      const row = button.closest('[data-payload-row]'), input = row.querySelector('[data-payload-id]');
+      const allowed = entity.type === 'building' ? ['infantry'] : ['infantry', 'vehicle'];
+      openPicker('passenger', input.value, false, '选择初始乘员', value => {
+        input.value = value; button.querySelector('span').textContent = value ? quickChoiceText('passenger', value) : '选择乘员';
+      }, allowed);
+    } else if (button.dataset.passengerChoose !== undefined) {
+      const input = details.querySelector('[data-passenger-id]');
+      openPicker('passenger', input.value, false, '选择要检查的乘员', value => {
+        input.value = value; button.querySelector('span').textContent = value ? quickChoiceText('passenger', value) : '选择乘员';
+        drawPassengerWeapons(details);
+      });
+    }
+  });
+  function readPayload(root) {
+    const rows = [...root.querySelectorAll('[data-payload-row]')], oldTypes = root.dataset.originalTypes || '', oldNums = root.dataset.originalNums || '';
+    const ids = rows.map(row => row.querySelector('[data-payload-id]').value.trim());
+    const counts = rows.map(row => row.querySelector('[data-payload-count]').value.trim());
+    if (ids.some(id => !id) || counts.some(count => !count)) throw new Error('请为每一行选择乘员并填写数量，或移除未完成的行。');
+    const originalIds = split(oldTypes), numbers = split(oldNums);
+    const originalCounts = ids.map((_, i) => numbers.length ? numbers[Math.min(i, numbers.length - 1)] : '1');
+    const sameIds = equalList(ids, originalIds);
+    return {
+      'InitialPayload.Types': sameIds ? oldTypes : ids.join(','),
+      'InitialPayload.Nums': equalList(counts, originalCounts) && (sameIds || numbers.length <= ids.length) ? oldNums : counts.join(','),
+    };
   }
   type.addEventListener('change', drawFields);
   editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
   back.addEventListener('click', () => {
     plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false;
-    editorDialog.querySelector('[data-editor-error]')?.remove();
-    next.focus({ preventScroll: true });
+    editorDialog.querySelector('[data-editor-error]')?.remove(); next.focus({ preventScroll: true });
   });
   next.addEventListener('click', () => {
     try {
       if (state.project !== project || state.selected !== section) throw new Error('当前项目或对象已改变，请重新打开快捷功能。');
-      const values = Object.fromEntries([...details.querySelectorAll('[data-quick-field]')].map(input => [input.dataset.quickField, input.value]));
-      plan = prepareQuickFeature(project, { featureId: feature().id, type: entity.type, section, values });
+      if (feature().kind === 'passenger-fire') {
+        const selections = Object.fromEntries([...details.querySelectorAll('[data-fire-weapon]')].map(input => [input.dataset.fireWeapon, input.value]));
+        plan = preparePassengerFire(project, { type: entity.type, section, passenger: details.querySelector('[data-passenger-id]')?.value, mode: details.querySelector('[data-fire-mode]')?.value, selections, reservedIds: state.entities.map(item => item.id) });
+      } else {
+        const values = feature().id === 'payload' ? readPayload(details.querySelector('[data-quick-payload]')) : Object.fromEntries([...details.querySelectorAll('[data-quick-field]')].map(input => [input.dataset.quickField, input.value]));
+        plan = prepareQuickFeature(project, { featureId: feature().id, type: entity.type, section, values });
+      }
       const changes = plan.changes.length ? plan.changes.map(change => {
-        const info = fieldInfoFor(entity, change.key), before = change.before === null ? '未配置' : change.before || '空值';
+        const where = change.section || section;
+        const info = change.type === 'weapon' ? getFieldInfo(change.key, { type: 'weapon', section: where }) : fieldInfoFor(entity, change.key || '');
+        const before = change.before === null ? '未配置' : change.before || '空值';
         const location = change.file ? `${sourceName(change.file)}${change.file.sourceArchive ? '（保存为独立 INI）' : ''}` : '';
-        return `<div class="quick-change"><div>${fieldNameMarkup(info, change.key)}<small>${change.before === null ? '新增' : '修改'} · ${h(location)}</small></div><div class="quick-change-values"><span>${h(before)}</span><span aria-hidden="true">→</span><strong>${h(change.after)}</strong></div></div>`;
+        const label = change.kind === 'copy' ? `复制武器 [${h(change.before)}]` : fieldNameMarkup(info, change.key);
+        const action = change.kind === 'remove' ? '移除定义' : change.kind === 'copy' || change.before === null ? '新增' : '修改';
+        return `<div class="quick-change"><div>${label}<small>[${h(where)}] · ${action} · ${h(location)}</small></div><div class="quick-change-values"><span>${h(before)}</span><span aria-hidden="true">→</span><strong>${h(change.kind === 'remove' ? '未配置' : change.after || '空值')}</strong></div></div>`;
       }).join('') : '<p class="create-note">当前设置没有产生修改。</p>';
       const warnings = plan.warnings.length ? `<div class="quick-warnings"><strong>请留意</strong><ul>${plan.warnings.map(warning => `<li>${h(warning)}</li>`).join('')}</ul></div>` : '';
       preview.innerHTML = `<p><strong>${h(plan.feature.label)}</strong> · [${h(section)}]</p><p>确认后加入未保存的修改；点击主界面的「保存」后才会写入文件。</p><div class="quick-changes">${changes}</div>${warnings}`;
       form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
-      editorDialog.querySelector('[data-editor-error]')?.remove();
-      apply.focus({ preventScroll: true });
+      editorDialog.querySelector('[data-editor-error]')?.remove(); apply.focus({ preventScroll: true });
     } catch (error) { showEditorError(error.message); }
   });
   apply.addEventListener('click', () => {
     if (!plan || state.project !== project || state.selected !== section) { showEditorError('当前项目或对象已改变，请重新预览。'); return; }
-    if (plan.changes.length) {
-      state.project = plan.project;
-      state.changedSections = new Set(markChanges().map(change => lower(change.section)));
-    }
-    editorDialog.close();
-    render();
+    if (plan.changes.length) { state.project = plan.project; state.changedSections = new Set(markChanges().map(change => lower(change.section))); }
+    editorDialog.close(); render();
     showToast(plan.changes.length ? `已添加 ${plan.feature.label} 的 ${plan.changes.length} 项修改；点击保存后写入规则文件。` : '当前设置没有产生修改。');
   });
-  drawFields();
-  editorDialog.showModal();
-  type.focus({ preventScroll: true });
+  drawFields(); editorDialog.showModal(); type.focus({ preventScroll: true });
 }
 
 function openCreateObject(copyCurrent) {
@@ -1679,7 +1843,7 @@ function openAddField() {
 function showChanges() {
   const changes = markChanges();
   const files = [...new Set(changes.map(change => change.file))];
-  dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">修改与导出 <span style="color:#90a58e;font:11px var(--mono)">${changes.length} CHANGES</span></h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body">${changes.length ? `<p>每个按钮下载对应的修改文件。MIX 中的规则会导出为独立 INI，不会修改资源包；文件夹结构不会自动创建。</p>${files.map((file,index) => `<div class="file-export"><strong>${h(sourceName(file))}</strong><button class="btn primary sm" data-export="${index}">${icon('download',14)} 下载 ${h(file.name)}</button></div>`).join('')}<div style="margin-top:18px">${changes.map(change => change.kind === 'section' ? `<div class="change-row"><div class="where">${h(sourceName(change.file))}</div><div class="after">新增规则段 [${h(change.section)}]</div></div>` : `<div class="change-row"><div class="where">${h(sourceName(change.file))} / [${h(change.section)}]</div><div>${h(change.key)}: <span class="before">${h(change.before === null ? '（新增）' : change.before || '（空）')}</span> → <span class="after">${h(change.after || '（空）')}</span></div></div>`).join('')}</div>` : '<p>还没有修改。选择一个对象，修改属性后可在这里预览并下载。</p>'}</div>`;
+  dialog.innerHTML = `<div class="dialog-head"><h2 id="changes-title">修改与导出 <span style="color:#90a58e;font:11px var(--mono)">${changes.length} CHANGES</span></h2><button data-close aria-label="关闭">×</button></div><div class="dialog-body">${changes.length ? `<p>每个按钮下载对应的修改文件。MIX 中的规则会导出为独立 INI，不会修改资源包；文件夹结构不会自动创建。</p>${files.map((file,index) => `<div class="file-export"><strong>${h(sourceName(file))}</strong><button class="btn primary sm" data-export="${index}">${icon('download',14)} 下载 ${h(file.name)}</button></div>`).join('')}<div style="margin-top:18px">${changes.map(change => change.kind === 'section' ? `<div class="change-row"><div class="where">${h(sourceName(change.file))}</div><div class="after">新增规则段 [${h(change.section)}]</div></div>` : `<div class="change-row"><div class="where">${h(sourceName(change.file))} / [${h(change.section)}]</div><div>${h(change.key)}: <span class="before">${h(change.before === null ? '（新增）' : change.before || '（空）')}</span> → <span class="after">${h(change.kind === 'remove' ? '（已移除）' : change.after || '（空）')}</span></div></div>`).join('')}</div>` : '<p>还没有修改。选择一个对象，修改属性后可在这里预览并下载。</p>'}</div>`;
   dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
   dialog.querySelectorAll('[data-export]').forEach(button => button.addEventListener('click', () => {
     const file = files[Number(button.dataset.export)];

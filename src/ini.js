@@ -85,6 +85,7 @@ function includeNames(file) {
   let current = '';
   const includes = new Map();
   for (const line of file.lines) {
+    if (line.removed) continue;
     if (line.section !== null) current = keyOf(line.section);
     else if (current === '#include' && line.key) includes.set(keyOf(line.key), readLineValue(line).trim());
   }
@@ -105,6 +106,19 @@ function lineBytes(line) {
 function insertLines(file, index, lines) {
   if (index > 0 && !file.lines[index - 1].eol) file.lines[index - 1].eol = file.newline;
   file.lines.splice(index, 0, ...lines);
+}
+
+function discardAddedLine(file, line) {
+  const index = file.lines.indexOf(line);
+  if (index < 0) return;
+  file.lines.splice(index, 1);
+  if (line.fixedHeader) {
+    const header = line.fixedHeader;
+    const headerIndex = file.lines.indexOf(header);
+    const following = file.lines.slice(headerIndex + 1).find(item => !item.removed && (item.section !== null || item.added));
+    if (following?.added && following.section === null) following.fixedHeader = header;
+    else if (!following) header.eol = '';
+  }
 }
 
 export class IniProject {
@@ -139,6 +153,7 @@ export class IniProject {
       this.loadOrder.push(file);
       let current = null;
       for (const line of file.lines) {
+        if (line.removed) continue;
         if (line.section !== null) {
           const id = keyOf(line.section);
           current = this.sections.get(id);
@@ -235,15 +250,7 @@ export class IniProject {
     if (existing) {
       assertValue(existing.file, value);
       if (existing.line.added && value === '') {
-        const index = existing.file.lines.indexOf(existing.line);
-        existing.file.lines.splice(index, 1);
-        if (existing.line.fixedHeader) {
-          const header = existing.line.fixedHeader;
-          const headerIndex = existing.file.lines.indexOf(header);
-          const following = existing.file.lines.slice(headerIndex + 1).find(line => line.section !== null || line.added);
-          if (following?.added && following.section === null) following.fixedHeader = header;
-          else if (!following) header.eol = '';
-        }
+        discardAddedLine(existing.file, existing.line);
       } else existing.line.patch = value === existing.line.originalValue && (!existing.line.added || existing.line.cloned) ? undefined : value;
     } else if (value !== '') {
       const { file, line: header } = section.occurrences.at(-1);
@@ -258,6 +265,31 @@ export class IniProject {
     this.rebuild();
   }
 
+  // Remove all loaded occurrences so an earlier duplicate cannot silently become effective.
+  // Incomplete includes or inheritance make that guarantee impossible.
+  remove(sectionName, key) {
+    const section = this.section(sectionName);
+    if (!section) throw new Error(`没有找到 [${sectionName}]。`);
+    if (this.warnings.length) throw new Error(`规则加载不完整，无法安全移除字段：${this.warnings[0]}`);
+    const targets = [];
+    for (const file of new Set(this.loadOrder)) {
+      let current = '';
+      for (const line of file.lines) {
+        if (line.removed) continue;
+        if (line.section !== null) current = keyOf(line.section);
+        else if (current === keyOf(sectionName) && line.key && keyOf(line.key) === keyOf(key)) {
+          targets.push({ file, line, section: sectionName, key: line.key, before: readLineValue(line) });
+        }
+      }
+    }
+    for (const target of targets) {
+      if (target.line.added) discardAddedLine(target.file, target.line);
+      else target.line.removed = true;
+    }
+    this.rebuild();
+    return targets;
+  }
+
   changes() {
     const changes = [];
     for (const file of this.files) {
@@ -267,6 +299,7 @@ export class IniProject {
           section = line.section;
           if (line.addedSection) changes.push({ file, section, kind: 'section', before: null, after: section });
         }
+        else if (line.key && line.removed) changes.push({ file, section, key: line.key, kind: 'remove', before: line.originalValue, after: null });
         else if (line.key && line.patch !== undefined) changes.push({ file, section, key: line.key, before: line.added ? null : line.originalValue, after: line.patch });
       }
     }
@@ -278,6 +311,7 @@ export function serialize(file) {
   const chunks = [];
   let size = 0;
   for (const line of file.lines) {
+    if (line.removed) continue;
     const raw = lineBytes(line);
     const eol = encoder.encode(line.eol);
     chunks.push(raw, eol);

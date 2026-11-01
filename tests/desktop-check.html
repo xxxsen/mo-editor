@@ -31,8 +31,16 @@ const packed = new Map([['expandmo99.mix', mix([
   ['units.ini', '[PACKED]\nName=Packed Tank\nCost=200 ; packed\nStrength=300\nPrimary=PackGun\n[PackGun]\nProjectile=PackProj\n[PackProj]\nInviso=yes ; projectile\n'],
 ])]]);
 const output = new Map(), missing = new Map([['rulesmo.ini', bytes('[VehicleTypes]\n0=MISSING\n[#include]\n0=absent.ini\n[MISSING]\nName=Incomplete Tank\nCost=100\n')]]);
-const disks = { loose, packed, output, missing };
-const versions = { loose: [], packed: [], output: [], missing: [] }, transactions = new Map();
+const reset = new Map([
+  ['rulesmo.ini', bytes('[VehicleTypes]\n0=RESET\n[#include]\n0=extra.ini\n[RESET]\nName=Reset Tank\nImmuneToEMP=no ; first\n')],
+  ['extra.ini', bytes('[RESET]\nCost=250\nImmuneToEMP=yes ; last\n')],
+]);
+const fire = new Map([
+  ['rulesmo.ini', bytes('[InfantryTypes]\n0=GUNNER\n[VehicleTypes]\n0=OTHER\n[WeaponTypes]\n0=Gun\n[#include]\n0=units.ini\n')],
+  ['units.ini', bytes('[GUNNER]\nName=Fire Infantry\nPrimary=Gun\n[OTHER]\nName=Other Tank\nPrimary=Gun\n[Gun]\nDamage=20\nFireInTransport=no ; preserve\n')],
+]);
+const disks = { loose, packed, output, missing, reset, fire };
+const versions = { loose: [], packed: [], output: [], missing: [], reset: [], fire: [] }, transactions = new Map();
 let current = 'loose', nextTransaction = 0, remembered = '';
 const describe = id => ({ sessionId: id, directory: `D:\\${id}`, files: [...disks[id]].map(([path, data]) => ({ path, name: path.split('/').at(-1), size: data.byteLength })) });
 const snapshot = (disk, entries) => entries.map(entry => ({ path: entry.path, data: disk.has(entry.path) ? disk.get(entry.path).slice() : null }));
@@ -153,12 +161,39 @@ frame.addEventListener('load', async () => {
   d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'ability save backup missing');
   d.querySelector('[data-restore="0"]').click();
   await waitFor(() => !packed.has('rulesmo.ini') && !packed.has('units.ini') && !d.querySelector('#app').inert, 'restoring ability save did not restore MIX source');
+  current = 'reset'; d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Reset Tank', 'default reset fixture did not open');
+  d.querySelector('[data-action="quick-feature"]').click(); editor = d.querySelector('#editor-dialog');
+  const quickType = editor.querySelector('#quick-feature-type'); quickType.value = 'protection'; quickType.dispatchEvent(new w.Event('change', { bubbles: true }));
+  const immunity = editor.querySelector('[data-quick-field="ImmuneToEMP"]'); check(immunity.value === 'yes', 'effective immunity value incorrect');
+  immunity.value = ''; editor.querySelector('[data-quick-next]').click();
+  check(editor.textContent.includes('rulesmo.ini') && editor.textContent.includes('extra.ini'), 'reset preview omitted an affected file');
+  editor.querySelector('[data-quick-apply]').click(); d.querySelector('[data-action="save"]').click();
+  await waitFor(() => !decoder.decode(reset.get('rulesmo.ini')).includes('ImmuneToEMP=') && !decoder.decode(reset.get('extra.ini')).includes('ImmuneToEMP=') && !d.querySelector('#app').inert, 'default reset did not save both files');
+  check(versions.reset[0].paths.length === 2, 'default reset did not back up both files');
+  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'default reset backup missing');
+  d.querySelector('[data-restore="0"]').click();
+  await waitFor(() => decoder.decode(reset.get('rulesmo.ini')).includes('ImmuneToEMP=no ; first') && decoder.decode(reset.get('extra.ini')).includes('ImmuneToEMP=yes ; last') && !d.querySelector('#app').inert, 'default reset restore did not restore both files');
+  current = 'fire'; d.querySelector('[data-action="folder"]').click();
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Fire Infantry', 'passenger-fire fixture did not open');
+  d.querySelector('[data-action="quick-feature"]').click(); editor = d.querySelector('#editor-dialog');
+  const fireType = editor.querySelector('#quick-feature-type'); fireType.value = 'passenger-fire'; fireType.dispatchEvent(new w.Event('change', { bubbles: true }));
+  const fireChoice = editor.querySelector('[data-fire-weapon="Gun"]'); check(fireChoice, 'passenger weapon missing'); fireChoice.value = 'yes';
+  editor.querySelector('[data-quick-next]').click(); check(editor.textContent.includes('Gun_OT') && editor.textContent.includes('WeaponTypes'), 'passenger-copy preview missing');
+  editor.querySelector('[data-quick-apply]').click(); d.querySelector('[data-action="save"]').click();
+  await waitFor(() => decoder.decode(fire.get('rulesmo.ini')).includes('1=Gun_OT') && decoder.decode(fire.get('units.ini')).includes('[Gun_OT]') && !d.querySelector('#app').inert, 'passenger weapon clone did not save');
+  check(decoder.decode(fire.get('units.ini')).includes('Primary=Gun_OT') && decoder.decode(fire.get('units.ini')).includes('FireInTransport=yes ; preserve'), 'passenger weapon clone lost its reference or modified value');
+  check(decoder.decode(fire.get('units.ini')).includes('[OTHER]\nName=Other Tank\nPrimary=Gun') && decoder.decode(fire.get('units.ini')).includes('FireInTransport=no ; preserve'), 'passenger weapon clone modified the original');
+  check(versions.fire[0].paths.length === 2, 'passenger weapon clone did not back up both files');
+  d.querySelector('[data-action="history"]').click(); await waitFor(() => d.querySelector('#changes-dialog').open && d.querySelector('[data-restore="0"]'), 'passenger copy backup missing');
+  d.querySelector('[data-restore="0"]').click();
+  await waitFor(() => !decoder.decode(fire.get('rulesmo.ini')).includes('Gun_OT') && !decoder.decode(fire.get('units.ini')).includes('Gun_OT') && !d.querySelector('#app').inert, 'passenger weapon clone restore failed');
   current = 'missing'; d.querySelector('[data-action="folder"]').click();
   await waitFor(() => d.querySelector('.detail-name h2')?.textContent === 'Incomplete Tank', 'incomplete fixture did not open');
   cost = d.querySelector('[data-field="Cost"]'); cost.value = '125'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(30);
   d.querySelector('[data-action="save"]').click();
   check(d.querySelector('#toast').textContent.includes('加载不完整') && decoder.decode(missing.get('rulesmo.ini')).includes('Cost=100'), 'incomplete includes did not block saving');
-  result.textContent = 'PASS: desktop open, direct save, conflict protection, backup, restore, save as, MIX includes and quick features';
+  result.textContent = 'PASS: desktop save, conflict protection, backup, restore, save as, MIX includes, quick features and multi-file default reset';
  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
 });
 frame.src = 'desktop-fixture.html';

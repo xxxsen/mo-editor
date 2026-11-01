@@ -52,7 +52,8 @@ test('buildings use garrison fields and preserve optional values while reporting
   assert.ok(result.warnings.some(warning => warning.includes('Selectable')));
   assert.ok(result.warnings.some(warning => warning.includes('吸收')));
   assert.throws(() => prepareQuickFeature(project, { featureId: 'transport', type: 'building', section: 'HOUSE', values }), /不支持/);
-  assert.deepEqual(quickFeaturesFor('infantry'), []);
+  assert.ok(quickFeaturesFor('infantry').some(item => item.id === 'stealth'));
+  assert.ok(!quickFeaturesFor('infantry').some(item => item.id === 'garrison'));
 });
 
 test('invalid forms never mutate the project or its prior unsaved changes', () => {
