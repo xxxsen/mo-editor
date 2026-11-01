@@ -1,0 +1,96 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Navigation check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const ids = ['VIRUS', 'SECOND', ...Array.from({ length: 55 }, (_, i) => `UNIT${i}`)];
+  const fillerWarheads = Array.from({ length: 280 }, (_, i) => `${i + 1}=FILLER${i}\n`).join('');
+  const rules = `[CombatDamage]\nIvanWarhead=VirusWH\n[Sides]\nAllied=AAA\n[Countries]\n0=AAA\n[AAA]\nName=Alpha\nSide=Allied\n[InfantryTypes]\n${ids.map((id, i) => `${i}=${id}\n`).join('')}[BuildingTypes]\n0=FAC\n[SuperWeaponTypes]\n0=SPECIAL\n[WeaponTypes]\n0=Virusgun\n1=OTHERGUN\n2=DEFAULTGUN\n[Warheads]\n0=VirusAttach\n${fillerWarheads}281=VirusWH\n282=OtherWH\n` +
+    `[VIRUS]\nName=病毒狙击手\nOwner=AAA\nPrimary=Virusgun\n[SECOND]\nName=病毒二号\nOwner=AAA\nPrimary=Virusgun\n` +
+    ids.slice(2).map((id, i) => `[${id}]\nName=病毒 ${i}\nOwner=AAA\n`).join('') +
+    `[FAC]\nName=测试建筑\nSuperWeapon=SPECIAL\n[SPECIAL]\nName=测试超级武器\nWeaponType=Virusgun\nSW.Warhead=OtherWH\n[Virusgun]\nName=病毒枪\nDamage=200\nWarhead=VirusAttach\nIvanBomb.Warhead=VirusWH\n[OTHERGUN]\nName=另一把枪\nWarhead=VirusWH\n[DEFAULTGUN]\nName=默认炸弹枪\nWarhead=VirusAttach\n[VirusAttach]\nIvanBomb=yes\n[VirusWH]\nCellSpread=1\nVerses=100%\n[OtherWH]\nCellSpread=3\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'rules did not open');
+  d.querySelector('[data-category="infantry"]').click();
+  let owner = d.querySelector('#owner-filter'); owner.value = 'AAA'; owner.dispatchEvent(new w.Event('change', { bubbles: true }));
+  let search = d.querySelector('#search'); search.value = '病毒'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const list = d.querySelector('.unit-list'); list.scrollTop = 400; const listPosition = list.scrollTop;
+  check(listPosition > 0, 'fixture list did not scroll');
+  d.querySelector('[data-entity="VIRUS"]').click(); d.querySelector('[data-tab="relations"]').click();
+  let detail = d.querySelector('.detail-body'); detail.scrollTop = 35; const detailPosition = detail.scrollTop;
+  d.querySelector('[data-jump="Virusgun"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'weapon relation did not open');
+  check(d.querySelector('.usage-notice').textContent.includes('2 个对象') && d.querySelector('.usage-notice').textContent.includes('1 个超级武器'), 'shared weapon usage was not shown');
+  check(d.querySelector('[data-jump-field="Warhead"]') && d.querySelector('[data-jump-field="IvanBomb.Warhead"]'), 'weapon fields lack separate direct links');
+  d.querySelector('[data-jump-field="IvanBomb.Warhead"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'VirusWH', 'bomb warhead did not open');
+  const selectedWarhead = d.querySelector('.unit-list [data-entity="VirusWH"]');
+  check(selectedWarhead?.classList.contains('selected') && selectedWarhead.getBoundingClientRect().top >= d.querySelector('.unit-list').getBoundingClientRect().top && selectedWarhead.getBoundingClientRect().bottom <= d.querySelector('.unit-list').getBoundingClientRect().bottom, 'jumped-to object was not revealed in the long list');
+  const trail = d.querySelector('.navigation-trail');
+  check(trail.textContent.includes('病毒狙击手') && trail.textContent.includes('Primary') && trail.textContent.includes('IvanBomb.Warhead'), 'visit path lost its objects or reference fields');
+  check(d.querySelector('.usage-notice').textContent.includes('3 个武器'), 'shared warhead usage was not shown');
+  let field = d.querySelector('[data-field="CellSpread"]'); field.value = '2'; field.dispatchEvent(new w.Event('change', { bubbles: true }));
+  d.querySelector('[data-action="show-referrers"]').click();
+  check(d.querySelector('[data-jump="Virusgun"]') && d.querySelector('[data-jump="OTHERGUN"]') && d.querySelector('[data-jump="DEFAULTGUN"]'), 'warhead referrers missing');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '病毒枪' && d.querySelector('[data-tab="basic"]').getAttribute('aria-selected') === 'true', 'back did not return to weapon and tab');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '病毒狙击手', 'back did not return to infantry');
+  check(d.querySelector('[data-tab="relations"]').getAttribute('aria-selected') === 'true', 'back did not restore the relations tab');
+  check(d.querySelector('#search').value === '病毒' && d.querySelector('#owner-filter').value === 'AAA', 'back did not restore search and owner filter');
+  check(d.querySelector('.unit-list').scrollTop === listPosition && d.querySelector('.detail-body').scrollTop === detailPosition, 'back did not restore scroll positions');
+  d.querySelector('[data-action="nav-forward"]').click(); d.querySelector('[data-action="nav-forward"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'VirusWH' && d.querySelector('[data-tab="relations"]').getAttribute('aria-selected') === 'true', 'forward did not restore warhead view');
+  d.querySelector('[data-tab="basic"]').click();
+  check(d.querySelector('[data-field="CellSpread"]').value === '2' && d.querySelector('[data-action="changes"] .badge-count').textContent === '1', 'navigation discarded the unsaved edit');
+  d.querySelector('[data-trail="0"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '病毒狙击手' && d.querySelector('#search').value === '病毒', 'path did not return to original context');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'VirusWH', 'back from a path jump did not return to the warhead');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'back did not return to weapon');
+  field = d.querySelector('[data-field="Warhead"]'); field.value = 'OtherWH'; field.dispatchEvent(new w.Event('change', { bubbles: true }));
+  d.querySelector('[data-jump-field="Warhead"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'direct link used a stale reference after an edit');
+  check(d.querySelector('[data-action="nav-forward"]').disabled, 'a new navigation did not clear the forward branch');
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true }));
+  check(d.querySelector('.detail-name h2').textContent === '病毒枪', 'Alt+Left did not go back');
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true }));
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'Alt+Right did not go forward');
+  d.querySelector('[data-category="weapon"]').click(); d.querySelector('[data-entity="DEFAULTGUN"]').click();
+  check(d.querySelector('[data-field="IvanBomb.Warhead"]').value === '' && d.querySelector('[data-jump-field="IvanBomb.Warhead"]').textContent === '查看默认', 'global default link was not distinguished');
+  d.querySelector('[data-jump-field="IvanBomb.Warhead"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'VirusWH' && d.querySelector('.navigation-trail').textContent.includes('全局默认'), 'global default did not open with its source');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('[data-field="IvanBomb.Warhead"]').value === '', 'viewing a global default wrote an override');
+  d.querySelector('[data-category="building"]').click(); d.querySelector('[data-entity="FAC"]').click();
+  check(d.querySelector('[data-jump-field="SuperWeapon"]'), 'superweapon choice is missing its direct link');
+  d.querySelector('[data-jump-field="SuperWeapon"]').click();
+  check(d.querySelector('.detail-name h2').textContent === '测试超级武器', 'superweapon direct link did not open');
+  d.querySelector('[data-jump-field="SW.Warhead"]').click();
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'superweapon warhead direct link did not open');
+  check(d.querySelector('.usage-notice').textContent.includes('1 个超级武器'), 'superweapon warhead referrer was not counted');
+  d.querySelector('[data-action="show-referrers"]').click();
+  check(d.querySelector('[data-jump="SPECIAL"]'), 'superweapon warhead referrer was not shown');
+  d.querySelector('[data-tab="basic"]').click(); field = d.querySelector('[data-field="CellSpread"]'); field.focus();
+  field.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true }));
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true }));
+  check(d.querySelector('.detail-name h2').textContent === 'OtherWH', 'shortcut navigated during IME composition');
+  field.dispatchEvent(new w.CompositionEvent('compositionend', { bubbles: true }));
+  w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true }));
+  check(d.querySelector('.detail-name h2').textContent === '测试超级武器', 'shortcut did not resume after IME composition');
+  w.confirm = () => true;
+  const nextTransfer = new w.DataTransfer(); nextTransfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  input.files = nextTransfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'new project did not load');
+  check(d.querySelector('[data-action="nav-back"]').disabled && !d.querySelector('.navigation-trail'), 'new project retained navigation from the previous project');
+  result.textContent = 'PASS: navigation history, visit path, search/filter/scroll restoration, unsaved edits, shared users, direct links and shortcuts';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

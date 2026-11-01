@@ -15,6 +15,7 @@ const dialog = document.querySelector('#changes-dialog');
 const editorDialog = document.querySelector('#editor-dialog');
 const toast = document.querySelector('#toast');
 const state = { project: null, resources: null, desktopSession: null, demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
+const navigation = { entries: [], index: -1, trail: [] };
 let pointerDown = false;
 let renderPending = false;
 let composing = false;
@@ -196,7 +197,7 @@ function captureView() {
       focus.direction = active.selectionDirection;
     }
   }
-  return { x: window.scrollX, y: window.scrollY, list: app.querySelector('.unit-list')?.scrollTop || 0, detail: app.querySelector('.detail-body')?.scrollTop || 0, armor: app.querySelector('.armor-overrides-list')?.scrollTop || 0, focus };
+  return { x: window.scrollX, y: window.scrollY, list: app.querySelector('.unit-list')?.scrollTop || 0, detail: app.querySelector('.detail-body')?.scrollTop || 0, armor: app.querySelector('.armor-overrides-list')?.scrollTop || 0, trail: app.querySelector('.navigation-trail')?.scrollLeft ?? null, focus };
 }
 
 function restoreView(view, resetList) {
@@ -206,6 +207,8 @@ function restoreView(view, resetList) {
   if (detail) detail.scrollTop = view.detail;
   const armor = app.querySelector('.armor-overrides-list');
   if (armor) armor.scrollTop = view.armor;
+  const trail = app.querySelector('.navigation-trail');
+  if (trail) trail.scrollLeft = view.trail ?? trail.scrollWidth;
   if (view.focus) {
     const { id, attribute, value, type, key, start, end, direction } = view.focus;
     const dataAttribute = attribute === 'versesIndex' ? 'verses-index' : attribute;
@@ -217,6 +220,76 @@ function restoreView(view, resetList) {
     }
   }
   window.scrollTo(view.x, view.y);
+}
+
+const navigationKeys = ['category', 'selected', 'selectedType', 'tab', 'search', 'owner', 'listLimit', 'globalSearch', 'armorSearch', 'armorOpen'];
+function navigationLocation() {
+  return Object.fromEntries(navigationKeys.map(key => [key, state[key]]));
+}
+function navigationNode(entity, via = '') {
+  return { id: entity.id, type: entity.type, name: entity.name, via, location: null };
+}
+function resetNavigation() {
+  const entity = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
+  navigation.trail = entity ? [navigationNode(entity)] : [];
+  navigation.entries = [];
+  navigation.index = -1;
+}
+function captureNavigation() {
+  const entity = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
+  return { location: navigationLocation(), view: captureView(), trail: [...navigation.trail], label: entity?.name || entity?.id || labelFor(state.category) };
+}
+function initializeNavigation() {
+  navigation.entries = [captureNavigation()];
+  navigation.index = 0;
+  updateNavigationControls();
+}
+function updateNavigationControls() {
+  for (const [action, offset, label, shortcut] of [['nav-back', -1, '返回', 'Alt+←'], ['nav-forward', 1, '前进', 'Alt+→']]) {
+    const button = app.querySelector(`[data-action="${action}"]`);
+    if (!button) continue;
+    const entry = navigation.entries[navigation.index + offset];
+    button.disabled = !entry;
+    button.title = entry ? `${label}：${entry.label}（${shortcut}）` : `${label}（${shortcut}）`;
+  }
+}
+function recordNavigation(before) {
+  if (navigation.index < 0) { initializeNavigation(); return; }
+  navigation.entries[navigation.index] = before;
+  navigation.entries.splice(navigation.index + 1);
+  navigation.entries.push(captureNavigation());
+  if (navigation.entries.length > 100) navigation.entries.shift();
+  navigation.index = navigation.entries.length - 1;
+  updateNavigationControls();
+}
+function restoreNavigation(entry) {
+  Object.assign(state, entry.location);
+  navigation.trail = [...entry.trail];
+  render({ viewOverride: entry.view });
+  updateNavigationControls();
+}
+function moveNavigation(offset) {
+  const index = navigation.index + offset;
+  if (composing || index < 0 || index >= navigation.entries.length) return;
+  navigation.entries[navigation.index] = captureNavigation();
+  navigation.index = index;
+  restoreNavigation(navigation.entries[index]);
+}
+function navigateTrail(index) {
+  const node = navigation.trail[index];
+  if (composing || !node?.location || index >= navigation.trail.length - 1) return;
+  const before = captureNavigation();
+  const trail = navigation.trail.slice(0, index + 1);
+  restoreNavigation({ ...node.location, trail });
+  recordNavigation(before);
+}
+function trailMarkup() {
+  if (navigation.trail.length < 2) return '';
+  return `<nav class="navigation-trail" aria-label="访问路径"><span class="trail-label">访问路径</span>${navigation.trail[0].truncated ? '<span class="trail-edge">… ›</span>' : ''}${navigation.trail.map((node, index) => {
+    const name = entityFor(node.id, node.type)?.name || node.name || node.id;
+    const label = `${h(name)}${lower(name) === lower(node.id) ? '' : ` <code>[${h(node.id)}]</code>`}`;
+    return `${index ? `<span class="trail-edge">› ${h(node.via || '关联')}</span>` : ''}${index < navigation.trail.length - 1 ? `<button type="button" data-trail="${index}" title="返回 ${h(name)}">${label}</button>` : `<span class="trail-current" aria-current="page">${label}</span>`}`;
+  }).join('')}</nav>`;
 }
 
 async function showIcon(element) {
@@ -289,10 +362,10 @@ function refreshLibraryResults() {
   observeIcons();
 }
 
-function render({ resetList = false } = {}) {
+function render({ resetList = false, viewOverride = null } = {}) {
   clearTimeout(renderTimer);
   renderPending = false;
-  const view = captureView();
+  const view = viewOverride || captureView();
   state.entities = buildEntities();
   const owners = unique(state.entities.flatMap(item => item.owner.split(',').map(value => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const ownerChoices = countriesFor(state.project, state.resources?.strings, '', owners, state.resources?.clientSides);
@@ -325,7 +398,7 @@ function render({ resetList = false } = {}) {
       <div class="side-foot"><div class="local-card"><div class="local-card-title"><span class="dot"></span> 本地处理</div><p>${desktop.isDesktop ? '规则和资源在本机处理；保存前自动备份原文件。' : '文件仅在浏览器中读取。导出时不会覆盖你的原文件。'}</p></div><div class="version">RULES WORKBENCH &nbsp; / &nbsp; V0.1</div></div>
     </aside>
     <main class="main">
-      <header class="topbar"><div class="crumb"><strong>工作区</strong><span class="slash">/</span><span>规则编辑</span><span class="slash">/</span><span>${h(projectName)}</span></div>
+      <header class="topbar"><div class="topbar-context"><div class="navigation-controls" aria-label="浏览历史"><button type="button" data-action="nav-back" aria-label="返回" title="返回（Alt+←）" ${navigation.index > 0 ? '' : 'disabled'}>←</button><button type="button" data-action="nav-forward" aria-label="前进" title="前进（Alt+→）" ${navigation.index >= 0 && navigation.index < navigation.entries.length - 1 ? '' : 'disabled'}>→</button></div><div class="crumb"><strong>工作区</strong><span class="slash">/</span><span>规则编辑</span><span class="slash">/</span><span>${h(projectName)}</span></div></div>
         <div class="top-actions"><button class="btn plain" data-action="folder">${icon('folder', 15)}<span class="label-optional">${desktop.isDesktop ? '选择游戏目录' : '导入文件夹'}</span><span class="mobile-only" hidden>文件夹</span></button><button class="btn" data-action="open">${icon('upload', 15)} 打开文件</button>${desktop.isDesktop ? `<button class="btn" data-action="history" ${state.desktopSession ? '' : 'disabled'}>历史版本</button><button class="btn" data-action="save-as" ${state.desktopSession ? '' : 'disabled'}>另存为</button><button class="btn" data-action="changes">查看修改 <span class="badge-count">${changes.length}</span></button><button class="btn primary" data-action="save" ${state.desktopSession ? '' : 'disabled'}>保存</button>` : `<button class="btn primary" data-action="changes">${icon('download', 15)} 查看修改 <span class="badge-count">${changes.length}</span></button>`}</div>
       </header>
       <div class="content"><div class="intro"><div><div class="eyebrow">RULES WORKBENCH</div><h1>心灵终结规则编辑器</h1><p>让每一项规则清晰可查，从一个单位开始调整。</p></div><label class="project-badge"><span class="dot"></span> 主文件 <select id="main-select" aria-label="选择主规则文件">${mainOptions}</select></label></div>
@@ -336,16 +409,17 @@ function render({ resetList = false } = {}) {
       </div>
     </main></div>`;
   restoreView(view, resetList);
+  updateNavigationControls();
   observeIcons();
 }
 
 function renderDetail(entity) {
-  if (['global', 'sections'].includes(entity.type)) return renderGlobal(entity);
+  if (['global', 'sections'].includes(entity.type)) return trailMarkup() + renderGlobal(entity);
   const project = state.project;
   const sec = project.section(entity.id);
   const tab = state.tab;
   const detailBody = !sec ? `<div class="no-detail"><div><strong>找不到这个对象的定义</strong>它被列入类型列表，但当前导入的文件中没有 [${h(entity.id)}]。<br>请检查是否缺少 include 文件。</div></div>` : tab === 'basic' ? renderBasic(entity) : tab === 'relations' ? renderRelations(entity) : renderRaw(entity);
-  return `<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" data-icon-id="${h(entity.id)}">${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
+  return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" data-icon-id="${h(entity.id)}">${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
 }
 
 const unitBasic = ['Strength', 'Cost', 'Speed', 'Sight', 'Armor', 'TechLevel'];
@@ -397,7 +471,38 @@ function choiceField(entity, key, info, kind, field) {
     return `<span class="choice-chip">${h(text)}${lower(text) === lower(value) ? '' : ` <small>${h(value)}</small>`}</span>`;
   }).join('');
   const source = field ? `${sourceName(field.file)}${field.line.patch !== undefined ? ' · 已修改' : ''}` : '未定义 · 可选择添加';
-  return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}<button type="button" class="choice-trigger ${field?.line.patch !== undefined ? 'is-modified' : ''}" data-action="choose-options" data-kind="${kind}" data-key="${h(key)}" aria-label="选择${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}><span class="choice-chips">${chips || '<span class="choice-placeholder">未设置，点击选择</span>'}${values.length > 4 ? `<span class="choice-more">+${values.length - 4}</span>` : ''}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button><div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
+  const control = `<button type="button" class="choice-trigger ${field?.line.patch !== undefined ? 'is-modified' : ''}" data-action="choose-options" data-kind="${kind}" data-key="${h(key)}" aria-label="选择${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}><span class="choice-chips">${chips || '<span class="choice-placeholder">未设置，点击选择</span>'}${values.length > 4 ? `<span class="choice-more">+${values.length - 4}</span>` : ''}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button>`;
+  const reference = kind === 'superweapon' ? fieldReferenceMarkup(entity, key, raw) : '';
+  return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${reference ? `<div class="value-control">${control}${reference}</div>` : control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
+}
+
+function fieldReference(entity, key, value) {
+  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  if (!actual) return null;
+  let type = '';
+  if (unitTypes.has(actual.type) && weaponKey(key)) type = 'weapon';
+  else if (unitTypes.has(actual.type) && /^(superweapon|superweapon2)$/i.test(key)) type = 'superweapon';
+  else if (actual.type === 'weapon' && /^(warhead|ivanbomb\.warhead)$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'superweapon' && /^sw\.warhead$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'superweapon' && /^(weapontype|nuke\.payload)$/i.test(key)) type = 'weapon';
+  if (!type) return null;
+  let id = String(value || '').trim();
+  let isDefault = false;
+  if (!id && actual.type === 'weapon' && lower(key) === 'ivanbomb.warhead') {
+    const reference = weaponWarheadReferences(state.project, actual.id).find(ref => ref.key === 'IvanBomb.Warhead' && ref.source === 'global');
+    if (reference) { id = reference.id; isDefault = true; }
+  }
+  if (!id || /^(?:none|<none>)$/i.test(id)) return null;
+  const target = entityFor(id, type);
+  if (!target) return null;
+  const info = fieldInfoFor(actual, key);
+  return { id: target.id, type, name: target.name, isDefault, via: `${info.label} / ${key}${isDefault ? '（全局默认）' : ''}` };
+}
+
+function fieldReferenceMarkup(entity, key, value) {
+  const reference = fieldReference(entity, key, value);
+  if (!reference) return '';
+  return `<button type="button" class="reference-button" data-jump-field="${h(key)}" data-type="${h(reference.type)}" aria-label="查看 ${h(reference.via)}：${h(reference.name)}" title="${h(reference.isDefault ? '查看当前全局默认弹头：' : '查看关联配置：')}${h(reference.name)} [${h(reference.id)}]">${reference.isDefault ? '查看默认' : '查看'}</button>`;
 }
 
 function fieldMarkup(entity, key) {
@@ -418,7 +523,7 @@ function fieldMarkup(entity, key) {
     const truthy = /^(yes|true)$/i.test(raw);
     control = `<select class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}><option value="${h(truthy ? raw : positive)}" ${truthy ? 'selected' : ''}>是</option><option value="${h(truthy ? negative : raw)}" ${truthy ? '' : 'selected'}>否</option></select>`;
   } else {
-    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
+    control = `<div class="value-control"><input class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(raw)}" placeholder="未定义" autocomplete="off" spellcheck="false">${fieldReferenceMarkup(entity, key, raw)}${raw.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(key)}" aria-label="分项编辑${h(label)}">分项</button>` : ''}</div>`;
   }
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
@@ -468,7 +573,7 @@ function renderBasic(entity) {
   const isUnit = unitTypes.has(entity.type);
   const fields = entity.type === 'weapon' ? weaponBasic : entity.type === 'warhead' ? warheadBasic : entity.type === 'superweapon' ? superweaponBasic : unitBasic;
   const title = isUnit ? '单位属性' : entity.type === 'weapon' ? '武器属性' : entity.type === 'superweapon' ? '超级武器属性' : '弹头属性';
-  let body = `<div class="detail-body"><div class="section-head"><div><h3>${title}</h3><p>编辑现有值，或为未定义的属性添加值。</p></div><span class="section-num">01 / GENERAL</span></div><div class="field-grid">${fields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
+  let body = `<div class="detail-body">${usageMarkup(entity)}<div class="section-head"><div><h3>${title}</h3><p>编辑现有值，或为未定义的属性添加值。</p></div><span class="section-num">01 / GENERAL</span></div><div class="field-grid">${fields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (isUnit) {
     const extraHouses = ['RequiredHouses', 'ForbiddenHouses'].filter(key => state.project.get(entity.id, key));
     body += `<div class="block-divider"></div><div class="section-head"><div><h3>建造与武装</h3><p>选择国家和建造条件；实际可建造性还受其他规则影响。</p></div><span class="section-num">02 / LOADOUT</span></div><div class="field-grid">${[...unitAdvanced, ...extraHouses].map(key => fieldMarkup(entity, key)).join('')}</div>`;
@@ -500,6 +605,23 @@ function referencesTo(id) {
   }
   return users;
 }
+function weaponsReferencingWarhead(id) {
+  return state.entities.filter(item => item.type === 'weapon').map(weapon => ({
+    weapon, refs: weaponWarheadReferences(state.project, weapon.id).filter(ref => lower(ref.id) === lower(id)),
+  })).filter(item => item.refs.length);
+}
+function superweaponsReferencing(id, keys) {
+  return state.entities.filter(item => item.type === 'superweapon').map(superweapon => ({
+    superweapon, keys: keys.filter(key => lower(val(superweapon.id, key).trim()) === lower(id)),
+  })).filter(item => item.keys.length);
+}
+function usageMarkup(entity) {
+  if (!['weapon', 'warhead'].includes(entity.type)) return '';
+  const weapon = entity.type === 'weapon';
+  const count = weapon ? referencesTo(entity.id).length : weaponsReferencingWarhead(entity.id).length;
+  const supers = superweaponsReferencing(entity.id, weapon ? ['WeaponType', 'Nuke.Payload'] : ['SW.Warhead']).length;
+  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p></div>${count || supers ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+}
 function grantedSuperweapons(entity) {
   return ['SuperWeapon', 'SuperWeapon2', 'SuperWeapons'].flatMap(key => val(entity.id, key).split(',')
     .map(id => id.trim()).filter(id => id && !/^(?:none|<none>)$/i.test(id)).map(id => ({ id, key })));
@@ -507,27 +629,29 @@ function grantedSuperweapons(entity) {
 function refMarkup(title, id, type, source = null) {
   const target = entityFor(id, type) || entityFor(id);
   const heading = source ? fieldNameMarkup(fieldInfoFor(source.entity, source.key), source.key, 'ref-title', source.note) : `<div class="ref-title">${h(title)}</div>`;
-  return `<div class="ref"><div class="ref-icon">${icon(type || 'link', 16)}</div><div>${heading}<div class="ref-code">${h(id || '未设置')}</div>${source?.note ? `<div class="field-source">${h(source.note)}</div>` : ''}</div>${target ? `<button class="btn sm" data-jump="${h(target.id)}" data-type="${h(target.type)}">查看 ${icon('chevron', 12)}</button>` : ''}</div>`;
+  const via = source ? `${fieldInfoFor(source.entity, source.key).label} / ${source.key}${source.note ? `（${source.note}）` : ''}` : title;
+  const name = target && lower(target.name) !== lower(target.id) ? ` · ${h(target.name)}` : '';
+  return `<div class="ref"><div class="ref-icon">${icon(type || 'link', 16)}</div><div>${heading}<div class="ref-code">${h(id || '未设置')}${name}</div>${source?.note ? `<div class="field-source">${h(source.note)}</div>` : ''}</div>${target ? `<button class="btn sm" data-jump="${h(target.id)}" data-type="${h(target.type)}" data-via="${h(via)}">查看 ${icon('chevron', 12)}</button>` : ''}</div>`;
 }
 function renderRelations(entity) {
   let items = '';
   let description = '';
   if (entity.type === 'weapon') {
     const users = referencesTo(entity.id);
-    description = `根据已加载对象的常用武器字段，发现 ${users.length} 个引用；其他特殊武器逻辑可能未列出。`;
+    const supers = superweaponsReferencing(entity.id, ['WeaponType', 'Nuke.Payload']);
+    description = `根据已加载对象的常用武器字段和超级武器设置，发现 ${users.length} 个对象及 ${supers.length} 个超级武器引用；其他特殊武器逻辑可能未列出。`;
     items = refMarkup('弹头', val(entity.id, 'Warhead'), 'warhead', { entity, key: 'Warhead' });
     const bomb = weaponWarheadReferences(state.project, entity.id).find(ref => ref.key === 'IvanBomb.Warhead');
     if (bomb) items += refMarkup('', bomb.id, 'warhead', { entity, key: bomb.key, note: bomb.source === 'global' ? '沿用 [CombatDamage]IvanWarhead' : '' });
-    if (users.length) items += `<div class="block-divider"></div><div class="section-head"><div><h3>使用此武器的对象</h3><p>修改武器可能同时影响这些对象。</p></div></div>` + users.map(user => refMarkup(labelFor(user.type), user.id, user.type)).join('');
+    if (users.length || supers.length) items += `<div class="block-divider"></div><div class="section-head" data-ref-users><div><h3>使用此武器的对象</h3><p>修改武器可能同时影响这些对象。</p></div></div>` + users.map(user => refMarkup(labelFor(user.type), user.id, user.type)).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('');
   } else if (entity.type === 'warhead') {
-    const weapons = state.entities.filter(item => item.type === 'weapon').map(weapon => ({
-      weapon, refs: weaponWarheadReferences(state.project, weapon.id).filter(ref => lower(ref.id) === lower(entity.id)),
-    })).filter(item => item.refs.length);
-    description = `根据已加载的武器定义，发现 ${weapons.length} 个引用此弹头的武器；包括直接命中弹头和炸弹弹头。`;
-    items = weapons.map(({ weapon, refs }) => {
+    const weapons = weaponsReferencingWarhead(entity.id);
+    const supers = superweaponsReferencing(entity.id, ['SW.Warhead']);
+    description = `根据已加载的规则，发现 ${weapons.length} 个武器和 ${supers.length} 个超级武器引用此弹头；包括直接命中弹头和炸弹弹头。`;
+    items = (weapons.length || supers.length ? '<div class="section-head" data-ref-users><div><h3>引用此弹头的对象</h3></div></div>' : '') + (weapons.map(({ weapon, refs }) => {
       const roles = refs.map(ref => `${fieldInfoFor(weapon, ref.key).label}${ref.source === 'global' ? '（全局默认）' : ''}`).join('、');
       return refMarkup(`武器 · ${roles}`, weapon.id, 'weapon');
-    }).join('') || '<p class="ref-note">当前没有发现关联武器。</p>';
+    }).join('') + supers.map(({ superweapon }) => refMarkup('超级武器 · SW.Warhead', superweapon.id, 'superweapon')).join('') || '<p class="ref-note">当前没有发现关联对象。</p>');
   } else if (entity.type === 'superweapon') {
     const providers = state.entities.filter(item => unitTypes.has(item.type) && grantedSuperweapons(item).some(ref => lower(ref.id) === lower(entity.id)));
     description = `根据已加载对象的 SuperWeapon、SuperWeapon2 和 SuperWeapons 字段，发现 ${providers.length} 个提供对象；其他规则也可能影响可用性。`;
@@ -552,7 +676,7 @@ function renderRaw(entity) {
   const fields = [...state.project.section(entity.id).fields.values()];
   return `<div class="detail-body"><div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><span class="section-num">${fields.length} KEYS</span></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
-    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
+    return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" autocomplete="off" spellcheck="false">${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;
 }
 
@@ -562,9 +686,21 @@ function showToast(message) {
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove('visible'), 4500);
 }
-function selectEntity(id, type) {
-  const entity = entityFor(id, type) || entityFor(id);
-  if (!entity) return;
+function selectEntity(id, type, via = '关联') {
+  let entity = entityFor(id, type) || entityFor(id);
+  if (!entity) { state.entities = buildEntities(); entity = entityFor(id, type) || entityFor(id); }
+  if (!entity) { showToast(`未找到关联对象 ${id}。`); return; }
+  const before = captureNavigation();
+  const source = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
+  const last = navigation.trail.at(-1);
+  const path = source && last && lower(last.id) === lower(source.id) && last.type === source.type
+    ? [...navigation.trail] : source ? [navigationNode(source)] : [];
+  if (path.length) path[path.length - 1] = { ...path.at(-1), location: { location: before.location, view: before.view, label: before.label } };
+  navigation.trail = [...path, navigationNode(entity, via)];
+  if (navigation.trail.length > 64) {
+    navigation.trail = navigation.trail.slice(-64);
+    navigation.trail[0] = { ...navigation.trail[0], truncated: true };
+  }
   state.category = ['weapon','warhead','superweapon','global','sections'].includes(entity.type) ? entity.type : 'all';
   state.search = '';
   state.owner = '';
@@ -573,22 +709,34 @@ function selectEntity(id, type) {
   state.selectedType = entity.type;
   state.tab = 'basic';
   state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
-  render({ resetList: true });
+  const index = filteredEntities().findIndex(item => lower(item.id) === lower(entity.id) && item.type === entity.type);
+  if (index >= state.listLimit) state.listLimit = Math.ceil((index + 1) / 250) * 250;
+  render({ resetList: true, viewOverride: { ...before.view, list: 0, detail: 0, armor: 0, trail: null, focus: null } });
+  const list = app.querySelector('.unit-list'), selected = list?.querySelector('.unit.selected');
+  if (list && selected) list.scrollTop += selected.getBoundingClientRect().top - list.getBoundingClientRect().top - Math.max(0, (list.clientHeight - selected.clientHeight) / 2);
+  recordNavigation(before);
 }
 
 function refreshDetail(focusTab = false) {
   const entity = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
   if (!entity) return;
   const x = window.scrollX, y = window.scrollY;
+  const trailScroll = app.querySelector('.navigation-trail')?.scrollLeft;
   app.querySelector('.detail').innerHTML = renderDetail(entity);
+  const trail = app.querySelector('.navigation-trail');
+  if (trail) trail.scrollLeft = trailScroll ?? trail.scrollWidth;
   if (focusTab) app.querySelector(`[data-tab="${state.tab}"]`)?.focus({ preventScroll: true });
   window.scrollTo(x, y);
   observeIcons();
 }
 
 function selectListItem(button) {
-  if (lower(state.selected) !== lower(button.dataset.entity) || state.selectedType !== button.dataset.type) {
+  const changed = lower(state.selected) !== lower(button.dataset.entity) || state.selectedType !== button.dataset.type;
+  const before = changed ? captureNavigation() : null;
+  if (changed) {
     state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
+    const entity = entityFor(button.dataset.entity, button.dataset.type);
+    navigation.trail = entity ? [navigationNode(entity)] : [];
   }
   state.selected = button.dataset.entity;
   state.selectedType = button.dataset.type;
@@ -599,12 +747,15 @@ function selectListItem(button) {
     item.setAttribute('aria-pressed', String(selected));
   });
   refreshDetail();
+  if (before) recordNavigation(before);
 }
 
 function selectGlobalField(section, key) {
   const entity = entityFor(section, 'global');
   const field = state.project.get(section, key);
   if (!entity || !field) return;
+  const before = captureNavigation();
+  navigation.trail = [navigationNode(entity)];
   state.category = 'global';
   state.owner = '';
   state.selected = entity.id;
@@ -616,6 +767,7 @@ function selectGlobalField(section, key) {
   const detail = app.querySelector('.detail-body');
   if (detail) detail.scrollTop = 0;
   app.querySelector(`[data-field="${CSS.escape(field.name)}"]`)?.focus({ preventScroll: true });
+  recordNavigation(before);
 }
 
 // A field can lose focus during pointerdown. Keep its click target mounted
@@ -641,6 +793,12 @@ window.addEventListener('beforeunload', event => {
     event.returnValue = '';
   }
 });
+window.addEventListener('keydown', event => {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(event.key) || composing || event.isComposing || app.inert || dialog.open || editorDialog.open) return;
+  event.preventDefault();
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  moveNavigation(event.key === 'ArrowLeft' ? -1 : 1);
+});
 
 function commitField(section, key, value) {
   const existing = state.project.get(section, key);
@@ -655,6 +813,7 @@ app.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button || !app.contains(button)) return;
   if (button.dataset.category !== undefined) {
+    const before = captureNavigation();
     state.category = button.dataset.category;
     state.search = '';
     state.listLimit = 250;
@@ -672,7 +831,10 @@ app.addEventListener('click', event => {
       state.selected = first?.name || ''; state.selectedType = first ? 'sections' : ''; state.tab = 'basic';
       state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
     }
+    const selected = entityFor(state.selected, state.selectedType) || (state.selected ? { id: state.selected, type: state.selectedType, name: state.selected } : null);
+    navigation.trail = selected ? [navigationNode(selected)] : [];
     render({ resetList: true });
+    if (before.trail.length > 1 || navigationKeys.some(key => before.location[key] !== state[key])) recordNavigation(before);
   } else if (button.dataset.globalField !== undefined) {
     selectGlobalField(button.dataset.globalSection, button.dataset.globalField);
   } else if (button.dataset.entity !== undefined) {
@@ -681,8 +843,27 @@ app.addEventListener('click', event => {
     const hadFocus = document.activeElement === button;
     state.tab = button.dataset.tab;
     refreshDetail(hadFocus);
+  } else if (button.dataset.trail !== undefined) {
+    navigateTrail(Number(button.dataset.trail));
+  } else if (button.dataset.jumpField !== undefined) {
+    const entity = entityFor(state.selected, state.selectedType) || entityFor(state.selected);
+    const key = button.dataset.jumpField;
+    const value = entity && state.project.get(entity.id, key)?.value;
+    let reference = entity && fieldReference(entity, key, value);
+    if (entity && !reference) { state.entities = buildEntities(); reference = fieldReference(entity, key, value); }
+    if (reference) selectEntity(reference.id, reference.type, reference.via);
+    else showToast('当前字段没有可查看的关联对象。');
   } else if (button.dataset.jump !== undefined) {
-    selectEntity(button.dataset.jump, button.dataset.type);
+    selectEntity(button.dataset.jump, button.dataset.type, button.dataset.via);
+  } else if (button.dataset.action === 'nav-back') {
+    moveNavigation(-1);
+  } else if (button.dataset.action === 'nav-forward') {
+    moveNavigation(1);
+  } else if (button.dataset.action === 'show-referrers') {
+    state.tab = 'relations';
+    refreshDetail();
+    const detail = app.querySelector('.detail-body'), target = detail?.querySelector('[data-ref-users]');
+    if (detail && target) detail.scrollTop += target.getBoundingClientRect().top - detail.getBoundingClientRect().top;
   } else if (button.dataset.action === 'load-more') {
     state.listLimit += 250;
     render();
@@ -741,7 +922,9 @@ app.addEventListener('change', event => {
     state.listLimit = 250;
     state.project.rebuild();
     chooseInitial();
+    resetNavigation();
     render({ resetList: true });
+    initializeNavigation();
   }
 });
 
@@ -809,7 +992,7 @@ async function loadFiles(list, { nativeSession = null, skipConfirm = false } = {
     state.desktopSession = nativeSession;
     state.demo = false; state.category = 'all'; state.search = ''; state.owner = ''; state.tab = 'basic'; state.listLimit = 250;
     state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
-    chooseInitial(); render({ resetList: true });
+    chooseInitial(); resetNavigation(); render({ resetList: true }); initializeNavigation();
     showToast(main.sourceArchive ? `已从 ${main.sourceArchive} 读取 rulesmo.ini。` : `已导入 ${parsed.length} 个规则文件${resources.strings.size ? '，并加载文字资源' : ''}。请确认右上角选择的主文件。`);
     return true;
   } catch (error) { if (sequence === importSequence) showToast(`导入失败：${error.message || error}`); return false; }
@@ -1064,7 +1247,9 @@ function showChanges() {
 const demoFiles = [parseFile('demo-rules.ini', enc.encode(DEMO_MAIN)), parseFile('demo-units.ini', enc.encode(DEMO_UNITS))];
 state.project = new IniProject(demoFiles, 'demo-rules.ini');
 chooseInitial();
+resetNavigation();
 render();
+initializeNavigation();
 
 if (desktop.isDesktop) {
   const initialViewport = { width: window.innerWidth, height: window.innerHeight };

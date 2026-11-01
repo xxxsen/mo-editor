@@ -4,7 +4,7 @@
 
 ## Windows 桌面版
 
-可使用 `dist/MentalOmegaEditor-0.1.1-Setup.exe` 安装，或直接运行 `dist/MentalOmegaEditor-0.1.1.exe`。Windows 需要 WebView2 运行时；安装程序会在需要时引导安装。
+可使用 `dist/MentalOmegaEditor-0.1.2-Setup.exe` 安装，或直接运行 `dist/MentalOmegaEditor-0.1.2.exe`。Windows 需要 WebView2 运行时；安装程序会在需要时引导安装。
 
 启动桌面程序后选择游戏目录，例如 `D:\MentalOmega`。程序会记住最近打开的目录；修改后点击「保存」或按 `Ctrl+S`，直接写回对应 INI 文件。保存前会备份被覆盖的文件；如果游戏目录中的文件在打开后被其他程序修改，保存会停止并保留当前编辑内容。
 
@@ -54,6 +54,10 @@ py -m http.server 4173 --bind 127.0.0.1
 5. 「超级武器」读取 `[SuperWeaponTypes]` 中的注册项，支持修改充能、费用、效果与限制等参数；建筑和其他提供对象中的超级武器可通过选择器调整，关联关系可双向查看。未定义的参数显示为空，具体默认值和效果取决于武器类型及游戏引擎。
 6. 桌面版点击「保存」写回并备份；也可以点击「另存为」输出到其他目录。浏览器版通过「查看修改」逐个下载已修改的文件，再根据路径提示自行放置。
 
+从武器、弹头或超级武器字段的「查看」进入关联对象后，左侧列表会定位到该对象。可使用顶部的返回、前进按钮或 `Alt+←` / `Alt+→`，也可点击详情顶部的访问路径。返回会恢复当时的搜索、筛选、页签和滚动位置，并保留未保存的规则修改。切换项目或主文件后，浏览记录会清空；桌面版的「历史版本」是文件备份，与浏览记录分开。
+
+武器和弹头的基础属性页显示根据已加载规则识别出的引用数量，点击「查看引用」可列出使用者；特殊规则和未加载的文件可能包含其他引用。字段旁的「查看」打开目标规则段，直接编辑字段值则会更改引用。全局默认的炸弹弹头标为「查看默认」，查看时不会写入覆盖值。
+
 已收录的规则字段显示为「中文名 / 规则字段名」，鼠标悬停可查看作用说明；未确认作用的字段保留原始代码，不推测含义。
 
 武器的 `Warhead` 是命中弹头，`IvanBomb.Warhead` 是附着炸弹爆炸时使用的弹头，两者可分别编辑和查看关联。命中弹头需要启用 `IvanBomb=yes`，炸弹效果才会生效；未单独设置或留空时，编辑器会根据已加载的 `[CombatDamage]IvanWarhead` 显示全局默认值及其来源，不会把默认值写入武器规则。具体规则参见 [Ares 炸弹文档](https://ares-developers.github.io/Ares-docs/new/weapons/ivanbombs.html)。
@@ -81,4 +85,4 @@ npm test
 
 浏览器端的导入、编辑、关联与导出检查位于 `tests/browser-check.html`；长列表滚动、焦点及连续操作检查位于 `tests/scroll-check.html`；资源解析和图标显示检查位于 `tests/resource-check.html`；规则来源优先级检查位于 `tests/rules-source-check.html`；全局配置、结构化字段和固定高度检查位于 `tests/structured-check.html`；跨规则段搜索检查位于 `tests/global-search-check.html`；中文输入及超级武器检查位于 `tests/superweapon-ime-check.html`；字段中文名及说明检查位于 `tests/field-metadata-check.html`；驻军武器及其关联检查位于 `tests/garrison-weapons-check.html`；武器的直接命中与附着炸弹弹头检查位于 `tests/weapon-warheads-check.html`。启动本地服务器后可访问这些页面运行。
 
-`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。
+`tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转、浏览记录、上下文恢复、共享引用和未保存修改；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。

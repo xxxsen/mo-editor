@@ -39,3 +39,21 @@
 .desktop-shell .topbar,.desktop-shell .intro,.desktop-shell .notice,.desktop-shell .resource-status,.desktop-shell .footer-note{flex:none}
 .desktop-shell .content{width:100%;flex:1;min-height:0;display:flex;flex-direction:column}
 .desktop-shell .workspace{height:auto;max-height:none;min-height:0;flex:1}
+
+.topbar-context{display:flex;align-items:center;gap:14px;min-width:0}
+.navigation-controls{display:flex;gap:5px;flex:none}
+.navigation-controls button{width:32px;height:32px;border:1px solid #3b4940;border-radius:6px;background:#1c2721;color:#c7d8c4;font-size:16px;line-height:1}
+.navigation-controls button:hover:not(:disabled){background:#29372d;border-color:#627b5b}
+.navigation-trail{display:flex;align-items:center;gap:8px;flex:none;overflow-x:auto;white-space:nowrap;padding:9px 27px;border-bottom:1px solid #344138;color:#a4b9a2;font-size:11px;scrollbar-width:thin}
+.navigation-trail::-webkit-scrollbar{height:5px}.navigation-trail::-webkit-scrollbar-thumb{background:#4b5e4c;border-radius:5px}
+.navigation-trail button{border:0;padding:3px 0;background:transparent;color:#c9e4b3;font-size:11px;white-space:nowrap}
+.navigation-trail button:hover{text-decoration:underline}
+.navigation-trail code{font:10px var(--mono);color:#819789}
+.trail-label{color:#728879;flex:none}.trail-edge{color:#829889;flex:none}.trail-current{color:#d9e8d4;flex:none}
+.reference-button{flex:none;padding:0 10px;border:1px solid #52684d;border-radius:6px;background:#243428;color:#c8e5b5;font-size:11px;white-space:nowrap}
+.reference-button:hover{background:#314b31}
+.value-control .choice-trigger{flex:1;min-width:0;width:auto}
+.usage-notice{display:flex;align-items:flex-start;gap:9px;margin-bottom:18px;padding:10px 12px;border:1px solid #3d513d;border-radius:7px;background:#1c2a20;color:#b3c7b2;font-size:11px;line-height:1.5}
+.usage-notice svg{color:#a4c78b;margin-top:1px}.usage-notice strong{color:#d0dfc9;font-weight:600}.usage-notice p{margin:3px 0 0}.usage-notice button{margin-left:auto;white-space:nowrap}
+.ref>div:nth-child(2){min-width:0}.ref-code{overflow-wrap:anywhere}
+@media(max-width:700px){.navigation-trail{padding:8px 17px}.topbar-context{width:100%}}
