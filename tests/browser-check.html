@@ -11,7 +11,9 @@ frame.addEventListener('load', async () => {
   await delay(80);
   check(d.body.textContent.includes('示例先锋坦克'), 'demo did not render');
   let owner = d.querySelector('#owner-filter'); owner.value = 'Epsilon'; owner.dispatchEvent(new w.Event('change', {bubbles:true}));
-  check(d.querySelectorAll('[data-entity]').length === 1 && d.querySelector('[data-entity]').dataset.entity === 'DEMO_WALKER', 'owner filter failed');
+  const units = [...d.querySelectorAll('[data-entity]')].filter(item => ['infantry', 'vehicle', 'aircraft', 'building'].includes(item.dataset.type));
+  check(units.length === 1 && units[0].dataset.entity === 'DEMO_WALKER', 'owner filter failed');
+  check(d.querySelector('[data-entity][data-type="weapon"]') && d.querySelector('.owner-filter-hint'), 'owner filtering hid other objects or omitted its scope');
   owner = d.querySelector('#owner-filter'); owner.value = ''; owner.dispatchEvent(new w.Event('change', {bubbles:true}));
   let strength = d.querySelector('[data-field="Strength"]');
   check(strength?.value === '400', 'effective include value not shown');

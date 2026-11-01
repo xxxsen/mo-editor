@@ -71,6 +71,7 @@ const CATEGORIES = [
 ];
 const labelFor = type => CATEGORIES.find(item => item.id === type)?.label || '对象';
 const unitTypes = new Set(['infantry', 'vehicle', 'aircraft', 'building']);
+const objectTypes = new Set([...unitTypes, 'superweapon', 'weapon', 'projectile', 'warhead']);
 const weaponKey = key => /^(primary|secondary|eliteprimary|elitesecondary|occupyweapon|eliteoccupyweapon|weapon\d+|eliteweapon\d+)$/i.test(key);
 
 function buildEntities() {
@@ -170,12 +171,12 @@ function chooseInitial() {
   state.selectedType = entityFor(state.selected)?.type || '';
 }
 function sectionTitle(entity) { return entity?.name || entity?.id || ''; }
-function count(type) { return type === 'sections' ? state.project.sections.size : state.entities.filter(item => type === 'all' ? unitTypes.has(item.type) : item.type === type).length; }
+function count(type) { return type === 'sections' ? state.project.sections.size : state.entities.filter(item => type === 'all' ? objectTypes.has(item.type) : item.type === type).length; }
 function filteredEntities() {
   const q = lower(state.search.trim());
   const side = state.owner.startsWith('@side:') ? state.owner.slice(6) : '';
   const sideCountries = side ? new Set(val('Sides', side).split(',').map(value => lower(value.trim())).filter(Boolean)) : null;
-  return state.entities.filter(item => (state.category === 'all' ? unitTypes.has(item.type) : item.type === state.category)
+  return state.entities.filter(item => (state.category === 'all' ? objectTypes.has(item.type) : item.type === state.category)
     && (!state.owner || !unitTypes.has(item.type) || item.owner.split(',').some(owner => sideCountries ? sideCountries.has(lower(owner.trim())) : lower(owner.trim()) === lower(state.owner)))
     && (!q || lower([item.name, item.originalName, item.uiName, item.id, item.owner, item.description].join(' ')).includes(q)));
 }
@@ -374,7 +375,7 @@ function libraryResults() {
   const list = display.map(entity => {
     const isSelected = selected && lower(selected.id) === lower(entity.id) && selected.type === entity.type;
     const isChanged = state.changedSections.has(lower(entity.id));
-    return `<button class="unit ${isSelected ? 'selected' : ''}" data-entity="${h(entity.id)}" data-type="${entity.type}" aria-pressed="${!!isSelected}" aria-label="${h(entity.name)}，${h(entity.id)}${isChanged ? '，有修改' : ''}"><span class="unit-icon" ${['global','sections','projectile'].includes(entity.type) ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 19)}</span><span class="unit-info"><span class="unit-name">${h(entity.name)}</span><span class="unit-id">${h(entity.id)}${entity.exists ? '' : ' · 未定义'}</span></span>${isChanged ? '<span class="unit-dirty" title="有修改" aria-hidden="true"></span>' : ''}<span class="unit-chevron">${icon('chevron', 14)}</span></button>`;
+    return `<button class="unit ${isSelected ? 'selected' : ''}" data-entity="${h(entity.id)}" data-type="${entity.type}" aria-pressed="${!!isSelected}" aria-label="${h(entity.name)}，${h(labelFor(entity.type))}，${h(entity.id)}${isChanged ? '，有修改' : ''}"><span class="unit-icon" ${['global','sections','projectile'].includes(entity.type) ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 19)}</span><span class="unit-info"><span class="unit-name">${h(entity.name)}</span><span class="unit-id">${state.category === 'all' ? `${h(labelFor(entity.type))} · ` : ''}${h(entity.id)}${entity.exists ? '' : ' · 未定义'}</span></span>${isChanged ? '<span class="unit-dirty" title="有修改" aria-hidden="true"></span>' : ''}<span class="unit-chevron">${icon('chevron', 14)}</span></button>`;
   }).join('');
   const fieldList = displayedFields.map(({ entity, field, info }) => `<button type="button" class="unit global-result" data-global-section="${h(entity.id)}" data-global-field="${h(field.name)}" aria-label="${h(info.label)}，${h(entity.name)}，${h(field.name)}"><span class="unit-icon">${icon('global', 19)}</span><span class="unit-info"><span class="unit-name">${h(info.label)}</span><span class="unit-id">[${h(entity.id)}] · ${h(field.name)} = ${h(field.value)}</span></span><span class="unit-chevron">${icon('chevron', 14)}</span></button>`).join('');
   return {
@@ -434,7 +435,7 @@ function render({ resetList = false, viewOverride = null } = {}) {
       </header>
       <div class="content"><div class="intro"><div><div class="eyebrow">RULES WORKBENCH</div><h1>心灵终结规则编辑器</h1><p>让每一项规则清晰可查，从一个单位开始调整。</p></div><div class="project-badge"><span class="dot"></span><span>主文件</span><button type="button" class="main-file-trigger" data-action="choose-main" aria-haspopup="dialog" aria-label="选择主规则文件" title="${h(mainName)}"><span>${h(mainName)}</span>${icon('chevron', 13)}</button></div></div>
       ${noticeMarkup()}
-      <div class="workspace"><section class="library" aria-label="对象列表"><div class="library-head"><div class="library-title"><h2>${h(labelFor(state.category) === '对象' ? '全部对象' : labelFor(state.category))}</h2><span>${library.count} ITEMS</span>${state.category !== 'global' ? '<button type="button" class="library-create" data-action="create-object">＋ 新增</button>' : ''}</div><div class="search-wrap">${icon('search', 15)}<input class="search" id="search" type="search" placeholder="搜索对象或全局参数..." value="${h(state.search)}" aria-label="搜索对象或全局参数"></div>${state.category === 'all' || unitTypes.has(state.category) ? `<select id="owner-filter" class="owner-filter" aria-label="按所属方筛选"><option value="">全部所属方</option>${ownerOptions}</select>` : ''}</div><div class="list-meta"><span>${state.search.trim() ? '搜索结果' : '对象列表'}</span><span>NAME / ID</span></div><div class="unit-list">${library.markup}</div></section>
+      <div class="workspace"><section class="library" aria-label="对象列表"><div class="library-head"><div class="library-title"><h2>${h(labelFor(state.category) === '对象' ? '全部对象' : labelFor(state.category))}</h2><span>${library.count} ITEMS</span>${state.category !== 'global' ? '<button type="button" class="library-create" data-action="create-object">＋ 新增</button>' : ''}</div><div class="search-wrap">${icon('search', 15)}<input class="search" id="search" type="search" placeholder="搜索对象或全局参数..." value="${h(state.search)}" aria-label="搜索对象或全局参数"></div>${state.category === 'all' || unitTypes.has(state.category) ? `<select id="owner-filter" class="owner-filter" aria-label="按所属方筛选单位" title="所属方筛选仅作用于单位"><option value="">全部所属方</option>${ownerOptions}</select>${state.category === 'all' && state.owner ? '<p class="owner-filter-hint">所属方仅筛选单位，其他对象仍显示</p>' : ''}` : ''}</div><div class="list-meta"><span>${state.search.trim() ? '搜索结果' : '对象列表'}</span><span>NAME / ID</span></div><div class="unit-list">${library.markup}</div></section>
       <section class="detail" aria-label="对象详情">${selected ? renderDetail(selected) : '<div class="no-detail"><div><strong>选择一个规则对象</strong>从左侧列表中选择，或导入包含单位列表的规则文件。</div></div>'}</section></div>
       <div class="footer-note"><span>已加载 ${state.project.loadOrder.length} 次文件 · ${state.demo ? '演示项目' : '本地项目'}</span><code>LOCAL FILES / NO GAME ASSETS INCLUDED</code></div>
       </div>

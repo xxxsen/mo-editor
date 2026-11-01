@@ -1,0 +1,57 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>All objects search check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const main = `[Countries]\n0=Psi\n1=Allied\n[Psi]\nName=Psi\n[Allied]\nName=Allied\n[InfantryTypes]\n0=VIRUS\n[VehicleTypes]\n0=YTNK\n[SuperWeaponTypes]\n0=SuperTest\n[WeaponTypes]\n0=Virusgun\n1=VirusgunE\n[Projectiles]\n0=InvisibleWork\n[Warheads]\n0=VirusAttach\n[VIRUS]\nName=病毒狙击手\nOwner=Psi\nPrimary=Virusgun\nElitePrimary=VirusgunE\n[YTNK]\nName=盖特坦克\nOwner=Allied\n[SuperTest]\nName=超级测试\n[InvisibleWork]\nInviso=yes\n[VirusAttach]\nIvanBomb=yes\n[Virusgun]\nDamage=200\nProjectile=InvisibleWork\nWarhead=VirusAttach\nFireInTransport=no ; normal\n[VirusgunE]\nDamage=200\nProjectile=InvisibleWork\nWarhead=VirusAttach\nFireInTransport=no ; elite\n`;
+  const transfer = new w.DataTransfer(); transfer.items.add(new w.File([main], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('.detail-name h2')?.textContent === '病毒狙击手', 'fixture did not load');
+  const search = query => { const box = d.querySelector('#search'); box.value = query; box.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const item = (id, type) => d.querySelector(`[data-entity="${id}"][data-type="${type}"]`);
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count').textContent);
+  check(d.querySelector('[data-category="all"]').classList.contains('active'), 'default category is not all objects');
+  for (const [id, type] of [['VIRUS','infantry'], ['YTNK','vehicle'], ['Virusgun','weapon'], ['VirusgunE','weapon'], ['InvisibleWork','projectile'], ['VirusAttach','warhead'], ['SuperTest','superweapon']]) check(item(id,type), `all objects omitted ${type}: ${id}`);
+  check(d.querySelector('[data-category="all"] .count').textContent === '7', 'all-objects badge does not count all recognized object types');
+  check(item('Virusgun','weapon').textContent.includes('武器 · Virusgun'), 'search results do not show object types');
+  check(!item('Psi','global'), 'global rule sections were duplicated in all objects');
+  search('vIrUsGuN');
+  check(item('Virusgun','weapon') && item('VirusgunE','weapon'), 'case-insensitive all-object search omitted the two weapons');
+  check(d.querySelector('.library-title span').textContent === '2 ITEMS', 'search result count incorrect');
+  let owner = d.querySelector('#owner-filter'); owner.value = 'Psi'; owner.dispatchEvent(new w.Event('change', { bubbles: true }));
+  check(item('Virusgun','weapon') && item('VirusgunE','weapon') && d.querySelector('.owner-filter-hint'), 'owner filter hid weapons or omitted its scope');
+  search('');
+  check(item('VIRUS','infantry') && !item('YTNK','vehicle') && item('Virusgun','weapon'), 'owner filter did not restrict only units');
+  search('vIrUsGuN');
+  item('Virusgun','weapon').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[Virusgun]'), 'all-objects result did not open the ordinary weapon');
+  d.querySelector('[data-tab="raw"]').click();
+  let fire = d.querySelector('[data-field="FireInTransport"]'); check(fire?.value === 'no', 'ordinary weapon field was not loaded');
+  fire.value = 'yes'; fire.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  check(count() === 1 && d.querySelector('#search').value === 'vIrUsGuN' && item('VirusgunE','weapon'), 'editing a search result lost the search or pending change');
+  item('VirusgunE','weapon').click(); d.querySelector('[data-tab="raw"]').click();
+  fire = d.querySelector('[data-field="FireInTransport"]'); check(fire?.value === 'no', 'elite weapon field was not loaded');
+  fire.value = 'yes'; fire.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(60);
+  check(count() === 2 && d.querySelector('.detail-name p').textContent.includes('[VirusgunE]'), 'elite weapon change was lost');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('.detail-name p').textContent.includes('[Virusgun]') && d.querySelector('#search').value === 'vIrUsGuN', 'navigation did not restore the prior all-object search');
+  d.querySelector('[data-category="vehicle"]').click(); search('Virusgun');
+  check(!item('Virusgun','weapon') && d.querySelector('.empty-list'), 'category-specific vehicle search included weapons');
+  d.querySelector('[data-category="all"]').click();
+  for (const [query, id, type] of [['InvisibleWork','InvisibleWork','projectile'], ['VirusAttach','VirusAttach','warhead'], ['超级测试','SuperTest','superweapon'], ['病毒狙击手','VIRUS','infantry']]) {
+    search(query); check(item(id,type), `all-object search omitted ${type}: ${id}`);
+  }
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  check(saved.includes('FireInTransport=yes ; normal') && saved.includes('FireInTransport=yes ; elite'), 'searched weapon changes did not export or preserve comments');
+  result.textContent = 'PASS: all object types, case-insensitive search, owner scope, category filtering, editing, navigation and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

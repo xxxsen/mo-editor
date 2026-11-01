@@ -63,6 +63,8 @@ py -m http.server 4173 --bind 127.0.0.1
 5. 「超级武器」读取 `[SuperWeaponTypes]` 中的注册项，支持修改充能、费用、效果与限制等参数；建筑和其他提供对象中的超级武器可通过选择器调整，关联关系可双向查看。未定义的参数显示为空，具体默认值和效果取决于武器类型及游戏引擎。
 6. 桌面版点击「保存」写回并备份；也可以点击「另存为」输出到其他目录。浏览器版通过「查看修改」逐个下载已修改的文件，再根据路径提示自行放置。
 
+「全部对象」包含已识别的单位、超级武器、武器、投射物和弹头，搜索结果显示对象类型。所属方筛选只作用于单位，其他类型仍会显示；其他分类仅显示相应类型的对象。全局参数可通过左侧搜索结果定位，「所有规则段」则用于浏览任意规则段。
+
 对象列表的「新增」和对象详情的「复制并新建」支持步兵、载具、飞机、建筑、武器、投射物、弹头、超级武器及普通规则段。可搜索模板或空白创建，预览规则段、类型登记及保留的引用后加入当前修改；还需点击「保存」才会写入文件。游戏对象的 ID 限制为 24 个字符，建议 ID 会自动缩短；普通规则段不受此限制。类型登记追加到已有列表末尾；没有对应列表时会创建列表。对于投射物，该列表用于编辑器管理，游戏效果仍需武器引用。
 
 载具和建筑详情提供「快捷功能」，可集中设置载具运输／车内开火或建筑驻军。表单带入当前已配置的值和未保存修改，缺少的必要字段显示可调整的建议值，可选字段留空则不写入。预览会列出新增与覆盖的字段及文件来源，并提示已配置的部分限制；确认后加入当前草稿，仍需保存才写入。载具使用 `Passengers`、`SizeLimit`、`PipScale`、`OpenTopped` 等字段，建筑驻军使用 `CanBeOccupied`、`MaxNumberOccupants`、`CanOccupyFire`，实际效果也受乘员、建筑美术、武器及其他规则影响。已有的乘员限制和其他未列出的字段不会自动改动；具体机制见 [Ares 乘员规则](https://ares-developers.github.io/Ares-docs/new/passengers.html)和[初始乘员与驻军](https://ares-developers.github.io/Ares-docs/new/initialpayload.html)。
@@ -113,3 +115,5 @@ npm test
 浏览器端的导入、编辑、关联与导出检查位于 `tests/browser-check.html`；长列表滚动、焦点及连续操作检查位于 `tests/scroll-check.html`；资源解析和图标显示检查位于 `tests/resource-check.html`；规则来源优先级检查位于 `tests/rules-source-check.html`；全局配置、结构化字段和固定高度检查位于 `tests/structured-check.html`；跨规则段搜索检查位于 `tests/global-search-check.html`；中文输入及超级武器检查位于 `tests/superweapon-ime-check.html`；字段中文名及说明检查位于 `tests/field-metadata-check.html`；驻军武器及其关联检查位于 `tests/garrison-weapons-check.html`；武器的直接命中与附着炸弹弹头检查位于 `tests/weapon-warheads-check.html`。启动本地服务器后可访问这些页面运行。
 
 `tests/desktop-check.html` 模拟桌面文件接口，覆盖保存、冲突、恢复、另存为和 MIX include；`tests/navigation-check.html` 检查关联跳转和浏览记录；`tests/projectile-check.html`、`tests/object-creation-check.html` 与 `tests/main-file-picker-check.html` 检查投射物编辑、对象新增和主文件选择；`src-tauri/src/store.rs` 中的 Rust 测试使用临时目录验证真实文件写入、备份和中断恢复。
+
+`tests/all-objects-search-check.html` 检查全部对象的跨类型搜索、所属方筛选、结果跳转与修改导出。
