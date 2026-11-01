@@ -9,5 +9,5 @@
     "windows": [{ "title": "心灵终结规则编辑器", "width": 1440, "height": 950, "minWidth": 800, "minHeight": 600 }],
     "security": { "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost" }
   },
-  "bundle": { "active": true, "targets": ["nsis"] }
+  "bundle": { "active": false }
 }
