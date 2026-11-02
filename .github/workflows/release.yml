@@ -42,18 +42,9 @@ jobs:
       - name: Build portable executable
         run: npm run desktop:build
 
-      - name: Name release asset from tag
-        id: asset
-        shell: pwsh
-        run: |
-          $safeTag = $env:GITHUB_REF_NAME -replace '[^A-Za-z0-9._-]', '-'
-          $assetPath = "dist/MentalOmegaEditor-$safeTag.exe"
-          Copy-Item -LiteralPath 'dist/MentalOmegaEditor.exe' -Destination $assetPath
-          "path=$assetPath" >> $env:GITHUB_OUTPUT
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ steps.asset.outputs.path }}
+          files: dist/MentalOmegaEditor.exe
           fail_on_unmatched_files: true
           generate_release_notes: true
