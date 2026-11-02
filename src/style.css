@@ -112,3 +112,16 @@
 .history-diff-meta{margin:12px 0}.history-encoding{font-size:10px!important;margin:7px 0;color:#8ea492!important}.history-diff-lines{max-height:min(43dvh,470px);overflow:auto;border:1px solid #384d3b;border-radius:7px;background:#111a15}
 .history-line{display:grid;grid-template-columns:18px 48px minmax(0,1fr) 48px;gap:6px;align-items:start;padding:5px 8px;border-bottom:1px solid #26382b;font:11px var(--mono);line-height:1.55}.history-line:last-child{border-bottom:0}.history-line.removed{background:#372320;color:#f0b6aa}.history-line.added{background:#1c3426;color:#caeab4}.history-sign,.history-number,.history-eol{color:#91a695}.history-number{text-align:right}.history-eol{text-align:right;font-size:9px}.history-line-content{min-width:0}.history-line-content code{display:block;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;color:inherit}.history-section{display:block;color:#a9bda6;font-size:10px}.history-pages{justify-content:center;margin-top:10px}
 @media(max-width:700px){.history-version{align-items:stretch;flex-direction:column}.history-actions{justify-content:flex-start}.history-diff-lines{max-height:none;overflow:visible}.history-line{grid-template-columns:15px 35px minmax(0,1fr);gap:4px}.history-eol{grid-column:3;text-align:left}}
+
+.extra-rows { display: grid; gap: 12px; margin: 12px 0; }
+.extra-row { padding: 12px; border: 1px solid var(--line, #405848); border-radius: 8px; }
+.extra-inputs { display: grid; grid-template-columns: minmax(150px, 2fr) repeat(3, minmax(90px, 1fr)); gap: 8px; margin: 8px 0; }
+.extra-inputs label { display: grid; gap: 5px; min-width: 0; font-size: 13px; }
+.extra-inputs input, .extra-inputs select { min-width: 0; width: 100%; }
+.extra-row-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.extra-row-actions button { padding: 4px 10px; }
+@media (max-width: 720px) { .extra-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.phobos-panel { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--edge); }
+.phobos-panel summary { cursor: pointer; color: var(--text); font-size: 14px; font-weight: 600; }
+.phobos-panel p { margin: 10px 0 16px; color: var(--muted); font-size: 12px; }

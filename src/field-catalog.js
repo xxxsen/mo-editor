@@ -7,7 +7,7 @@ const commonTechno = new Set(`name uiname strength armor cost techlevel sight ow
 
 function documentedFields(type, section, globalKind) {
   if (unitTypes.has(type)) return [FIELD_METADATA.common, FIELD_METADATA.techno, FIELD_METADATA.attachEffect];
-  if (['weapon', 'projectile', 'warhead', 'superweapon'].includes(type)) {
+  if (['weapon', 'projectile', 'warhead', 'superweapon', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(type)) {
     return [FIELD_METADATA.common, FIELD_METADATA[type], ...(type === 'warhead' ? [FIELD_METADATA.attachEffect] : [])];
   }
   if (type === 'global') {
@@ -53,6 +53,10 @@ export function availableFields(project, entity, entities = [], pending = []) {
   if (unitTypes.has(entity.type)) {
     for (const index of [1, 2]) for (const prefix of ['Weapon', 'EliteWeapon', 'Stage', 'EliteStage']) add(`${prefix}${index}`, 'documented');
     if (entity.type === 'vehicle') for (let index = 0; index < 4; index++) add(`BurstDelay${index}`, 'documented');
+  }
+  if (entity.type === 'sections' && /^art(?:mo|md)\.ini$/i.test(project.mainPath)) {
+    for (const index of [0, 1]) for (const suffix of ['Type', 'FLH', 'IsOnTurret']) add(`LaserTrail${index}.${suffix}`, 'documented');
+    add('LaserTrail.Types', 'documented');
   }
   if (entity.type === 'warhead') {
     for (const field of project.section('ArmorTypes')?.fields.values() || []) {

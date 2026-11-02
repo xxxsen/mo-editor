@@ -40,6 +40,12 @@ const abilities = [
 
 const definitions = {
   boolean: { title: '选择开关', options: make('开关', [['yes', '是'], ['no', '否']]) },
+  phobosTrajectory: { title: '选择投射物轨迹', description: 'Phobos 0.4 轨迹会停用冲突的原版轨迹逻辑。', options: make('Phobos 0.4', [['Straight', '直线'], ['Bombard', '轰炸']]) },
+  phobosInterceptorSlot: { title: '选择拦截武器槽', options: make('Phobos 0.4', [['0', '主武器'], ['1', '副武器']]) },
+  phobosAutoDeath: { title: '选择自动销毁方式', options: make('Phobos 0.4', [['kill', '正常摧毁'], ['vanish', '直接移除'], ['sell', '出售建筑']]) },
+  phobosHouses: { title: '选择所属方范围', multiple: true, exclusive: ['none', 'all'], options: make('Phobos 0.4', [['none', '无'], ['owner', '自身'], ['allies', '盟友'], ['team', '自身与盟友'], ['enemies', '敌方'], ['all', '全部']]) },
+  phobosTargets: { title: '选择暴击目标类型', multiple: true, exclusive: ['none', 'all'], options: make('Phobos 0.4', [['none', '无'], ['land', '陆地'], ['water', '水面'], ['infantry', '步兵'], ['units', '载具'], ['buildings', '建筑'], ['all', '全部']]) },
+
   abilities: {
     title: '选择晋升能力', multiple: true,
     description: '可搜索中文或规则代码；精英会保留老兵能力。Ares 选项需要对应扩展。未识别的现有值会保留。',
@@ -115,12 +121,29 @@ const projectileBooleans = new Set(`inviso aa ag an as asw arcing inaccurate pro
 const superweaponBooleans = new Set(`ispowered showtimer disableablefromshell sw.initialready sw.virtualcharge sw.autofire sw.manualfire sw.fireintoshroud sw.useaitargeting sw.showcameo`.split(' '));
 const weaponBooleans = new Set(`revealonfire fireintransport ivanbomb.detachable ivanbomb.destroysbridges decloaktofire omnifire bright islaser issonic israilgun isradbeam`.split(' '));
 const warheadBooleans = new Set(`ivanbomb mindcontrol temporal psychicdamage psychedelic poison radiation preventscatter malicious rocker`.split(' '));
+const phobosBooleans = {
+  unit: new Set(['interceptor', 'interceptor.deleteonintercept', 'passengers.syncowner', 'passengers.syncowner.revertonexit', 'passengerdeletion.dontscore', 'passengerdeletion.rate.sizemultiply', 'passengerdeletion.soylent', 'autodeath.onammodepletion', 'immunetocrit', 'multimindcontrol.releasevictim']),
+  weapon: new Set(['burst.firewithinsequence', 'attacheffect.checkonfirer']),
+  projectile: new Set(['interceptable', 'interceptable.deleteonintercept', 'trajectory.straight.passthrough']),
+  warhead: new Set(['crit.applychancepertarget', 'crit.warhead.fulldetonation', 'shield.penetrate', 'shield.break']),
+  superweapon: new Set(['detonate.atfirer', 'detonate.warhead.full', 'sw.next.reallaunch']),
+  shield: new Set(['inheritarmorfromtechno', 'powered', 'absorboverdamage', 'selfhealing.restartincombat', 'immunetocrit']),
+  attachtype: new Set(['cumulative', 'powered', 'cloakable', 'forcedecloak']),
+  radiation: new Set(['radsitewarhead.detonate', 'radhasowner', 'radhasinvoker']),
+  lasertrail: new Set(['ishousecolor', 'ignorevertical', 'isintense', 'cloakvisible', 'cloakvisible.detectedonly']),
+};
 const targetFields = new Set(['sw.affectstarget', 'sw.requirestarget', 'sw.airequirestarget']);
 const houseFields = new Set(['sw.affectshouse', 'sw.requireshouse', 'sw.airequireshouse', 'sw.timervisibility', 'sw.animationvisibility', 'lightning.radaroutageaffects']);
 
 export function enumKindForField(type, field) {
   const name = keyOf(field);
   if (type === 'building' && (name === 'needsengineer' || name === 'unsellable')) return 'boolean';
+  if ((units.has(type) ? phobosBooleans.unit : phobosBooleans[type])?.has(name)) return 'boolean';
+  if (units.has(type) && name === 'interceptor.weapon') return 'phobosInterceptorSlot';
+  if (units.has(type) && name === 'autodeath.behavior') return 'phobosAutoDeath';
+  if (type === 'projectile' && name === 'trajectory') return 'phobosTrajectory';
+  if (type === 'warhead' && name === 'crit.affects') return 'phobosTargets';
+  if ((type === 'warhead' && name === 'crit.affectshouses') || (units.has(type) && /^passengerdeletion\.(allowedhouses|soylentallowedhouses)$/.test(name))) return 'phobosHouses';
   if ((units.has(type) && technoBooleans.has(name)) || (type === 'projectile' && projectileBooleans.has(name))
     || (type === 'superweapon' && superweaponBooleans.has(name)) || (type === 'weapon' && weaponBooleans.has(name))
     || (type === 'warhead' && warheadBooleans.has(name))) return 'boolean';

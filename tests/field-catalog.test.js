@@ -24,7 +24,7 @@ test('suggestions combine documented and same-type fields without including exis
 test('field dictionaries and dynamic armor suggestions respect object context', () => {
   const projectile = availableFields(project, entities[3], entities);
   assert.ok(projectile.some(item => item.name === 'Arcing' && item.known));
-  assert.ok(!projectile.some(item => item.name === 'Strength'));
+  assert.ok(projectile.some(item => item.name === 'Strength' && item.known), 'Phobos projectiles may have interception strength');
   assert.ok(!projectile.some(item => item.name === 'Weapon1'));
   const warhead = availableFields(project, entities[4], entities);
   assert.ok(warhead.some(item => item.name === 'Versus.custom' && item.known));

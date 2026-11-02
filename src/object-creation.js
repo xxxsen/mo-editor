@@ -9,6 +9,10 @@ export const CREATE_TYPES = [
   { id: 'projectile', label: '投射物', registry: 'Projectiles' },
   { id: 'warhead', label: '弹头', registry: 'Warheads' },
   { id: 'superweapon', label: '超级武器', registry: 'SuperWeaponTypes' },
+  { id: 'shield', label: 'Phobos 护盾', registry: 'ShieldTypes' },
+  { id: 'attachtype', label: 'Phobos 附加效果', registry: 'AttachEffectTypes' },
+  { id: 'radiation', label: 'Phobos 辐射类型', registry: 'RadiationTypes' },
+  { id: 'lasertrail', label: 'Phobos 激光尾迹', registry: 'LaserTrailTypes' },
   { id: 'sections', label: '规则段', registry: '' },
 ];
 
@@ -27,6 +31,8 @@ export function createObjectOnCandidate(candidate, { type, id, template = '', re
   const kind = CREATE_TYPES.find(item => item.id === type);
   id = String(id ?? '').trim();
   if (!kind) throw new Error('请选择支持的对象类型。');
+  if (type === 'lasertrail' && !/^art(?:mo|md)\.ini$/i.test(project.mainPath)) throw new Error('激光尾迹需写入美术规则；请先选择根目录的 artmo.ini 或 artmd.ini 为主文件。');
+  if (['shield', 'attachtype', 'radiation'].includes(type) && /^art(?:mo|md)\.ini$/i.test(project.mainPath)) throw new Error('此 Phobos 类型需写入规则 INI；请先切换到规则主文件。');
   if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(id)) throw new Error('规则 ID 只能使用英文字母、数字、下划线、点和连字符，且必须以字母、数字或下划线开头。');
   if (kind.registry && id.length > MAX_GAME_OBJECT_ID_LENGTH) throw new Error(`游戏对象的规则 ID 最多 ${MAX_GAME_OBJECT_ID_LENGTH} 个字符，请缩短后重试。`);
   if (project.warnings.length) throw new Error(`规则加载不完整，无法安全新增：${project.warnings[0]}`);

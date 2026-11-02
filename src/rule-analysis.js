@@ -1,6 +1,7 @@
 import { listTypes } from './ini.js';
 import { STANDARD_ARMORS } from './rule-schema.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
+import { extraWarheadRows } from './phobos-warheads.js';
 
 const norm = value => String(value ?? '').trim().toLowerCase();
 const items = value => String(value ?? '').split(',').map(item => item.trim()).filter(item => item && !/^(?:none|<none>)$/i.test(item));
@@ -154,10 +155,22 @@ export function analyzeWeaponEffect(project, weapon, target) {
     stage.delay = raw(project, weapon, 'IvanBomb.Delay') || raw(project, 'CombatDamage', 'IvanTimedDelay');
     stages.push(stage);
   }
+  for (const [index, item] of extraWarheadRows(project, weapon).entries()) {
+    if (!item.id || /^(?:none|<none>)$/i.test(item.id)) continue;
+    const damage = item.damage || raw(project, weapon, 'Damage');
+    const stage = effectStage(project, `额外弹头 ${index + 1}`, weapon, item.id, damage, armor,
+      item.damage ? `[${weapon}]ExtraWarheads.DamageOverrides` : `[${weapon}]Damage（额外弹头默认）`);
+    stage.chance = item.chance || '100%（默认）';
+    stages.push(stage);
+  }
+  const limitations = [];
+  if (raw(project, target, 'ShieldType')) limitations.push(`目标设置了护盾 ${raw(project, target, 'ShieldType')}；以下只按本体装甲计算，不反映护盾吸收或穿透。`);
+  if ([direct, ...extraWarheadRows(project, weapon).map(item => item.id)].some(id => raw(project, id, 'Crit.Chance'))) limitations.push('部分弹头设置了暴击；暴击伤害和触发概率未计入数值乘积。');
+  if (raw(project, weapon, 'ExtraWarheads')) limitations.push('额外弹头需要对应武器触发，概率和其他游戏条件可能使其不生效。');
   const projectile = raw(project, weapon, 'Projectile');
   const projectileFields = ['AA', 'AG', 'AN', 'AS', 'ASW'].map(key => ({ key, value: raw(project, projectile, key) })).filter(field => field.value);
   const specialKeys = ['IsSonic', 'UseFireParticles', 'ApplyDamage', 'AmbientDamage', 'RadLevel', 'IsRailgun', 'AreaFire', 'Temporal', 'Parasite'];
   const specialFields = specialKeys.map(key => ({ key, value: raw(project, weapon, key) })).filter(field => field.value);
   const targeting = ['ForceFire', 'Retaliate', 'PassiveAcquire'].map(key => ({ key, value: raw(project, direct, `Versus.${armor}.${key}`) })).filter(field => field.value);
-  return { weapon, target, armor, projectile, projectileFields, stages, specialFields, targeting, incomplete: [...project.warnings] };
+  return { weapon, target, armor, projectile, projectileFields, stages, specialFields, targeting, limitations, incomplete: [...project.warnings] };
 }

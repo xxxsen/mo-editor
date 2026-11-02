@@ -335,3 +335,19 @@ export function listTypes(project, sectionName) {
   if (!fields) return [];
   return [...fields.values()].map(entry => entry.value.trim()).filter(Boolean);
 }
+
+// A project can contain unsaved edits from more than one selected main file.
+// Recheck every visited load graph that contributes a changed file before saving.
+export function dirtyProjectWarnings(project, mainPaths, changedFiles) {
+  const changed = new Set(changedFiles), seen = new Set(), problems = [];
+  for (const path of mainPaths) {
+    const id = pathKey(path);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const context = new IniProject(project.files, path);
+    if (context.loadOrder.some(file => changed.has(file)) && context.warnings.length) {
+      problems.push({ path, warnings: [...context.warnings] });
+    }
+  }
+  return problems;
+}

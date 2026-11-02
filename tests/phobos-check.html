@@ -1,0 +1,59 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Phobos workflow check</title></head><body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1440" height="900"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const check = (value, message) => { if (!value) throw new Error(message); };
+const wait = async (fn, message) => { for (let i = 0; i < 200; i++) { if (fn()) return; await delay(20); } throw new Error(message); };
+const rules = `[VehicleTypes]\n0=TANK\n[WeaponTypes]\n0=GUN\n[Warheads]\n0=HIT\n1=FIRST\n2=SECOND\n[Projectiles]\n0=SHOT\n[ShieldTypes]\n0=SHIELD\n[AttachEffectTypes]\n0=SLOW\n[SuperWeaponTypes]\n0=SW\n[TANK]\nName=测试坦克\nPrimary=GUN\nArmor=heavy\nAttachEffect.Duration=30\n[GUN]\nDamage=200\nProjectile=SHOT\nWarhead=HIT\nExtraWarheads=FIRST,SECOND\nExtraWarheads.DamageOverrides=10,20\nExtraWarheads.DetonationChances=25%\n[SHOT]\nAA=yes\n[HIT]\nVerses=100%\n[FIRST]\nVerses=100%\n[SECOND]\nVerses=100%\n[SHIELD]\nStrength=500\nArmor=heavy\n[SLOW]\nDuration=150\nSpeedMultiplier=0.5\n[SW]\nType=Custom\n`;
+const art = `[LaserTrailTypes]\n0=TRAIL\n[TRAIL]\nColor=255,0,0\nThickness=4\n[TANKART]\nCameoPCX=TEST\n`;
+frame.addEventListener('load', async () => {
+ try {
+  const w=frame.contentWindow,d=frame.contentDocument, transfer=new w.DataTransfer();
+  transfer.items.add(new w.File([rules],'rulesmo.ini')); transfer.items.add(new w.File([art],'artmo.ini'));
+  const input=d.querySelector('#file-input'); input.files=transfer.files; input.dispatchEvent(new w.Event('change',{bubbles:true}));
+  await wait(()=>d.querySelector('[data-entity="TANK"]'), 'rules not loaded');
+  d.querySelector('[data-entity="TANK"]').click(); d.querySelector('[data-action="quick-feature"]').click();
+  let dialog=d.querySelector('#editor-dialog'), feature=dialog.querySelector('#quick-feature-type');
+  feature.value='phobos-shield'; feature.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-quick-choose="ShieldType"]').click();
+  let option=dialog.querySelector('[data-quick-option="SHIELD"]'); check(option, 'shield option missing'); option.checked=true; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-quick-picker-apply]').click(); dialog.querySelector('[data-quick-next]').click();
+  check(dialog.textContent.includes('ShieldType') && dialog.textContent.includes('SHIELD'), 'shield preview missing');
+  dialog.querySelector('[data-quick-apply]').click();
+  check(d.querySelector('[data-field="ShieldType"]').value==='SHIELD', 'shield not applied');
+  d.querySelector('[data-phobos-panel] summary').click(); await delay(30);
+  d.querySelector('[data-action="choose-options"][data-kind="shield"]').click(); dialog=d.querySelector('#editor-dialog');
+  check(dialog.textContent.includes('可搜索已加载的护盾') && !dialog.textContent.includes('选择建筑或通用建造条件'), 'shield chooser description incorrect');
+  dialog.querySelector('[data-editor-close]').click();
+  const immune=d.querySelector('[data-field="ImmuneToCrit"]'); immune.value='yes'; immune.dispatchEvent(new w.Event('change',{bubbles:true})); await delay(30);
+  check(d.querySelector('[data-phobos-panel]').open, 'Phobos panel collapsed after editing');
+  d.querySelector('[data-tab="relations"]').click(); d.querySelector('[data-jump="GUN"]').click();
+  check(d.querySelector('[data-action="extra-warheads"]'), 'extra warhead editor missing');
+  d.querySelector('[data-action="extra-warheads"]').click(); dialog=d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-extra-index="1"][data-extra-key="chance"]').value==='25%', 'fallback chance missing');
+  check(dialog.querySelector('[data-extra-index="0"][data-extra-key="full"]').tagName==='SELECT', 'full detonation should use a selector');
+  dialog.querySelector('[data-extra-move="down"][data-index="0"]').click(); dialog.querySelector('[data-extra-next]').click();
+  check(dialog.textContent.includes('SECOND,FIRST') && dialog.textContent.includes('20,10'), 'reorder preview did not align damage');
+  dialog.querySelector('[data-extra-apply]').click();
+  check(d.body.textContent.includes('SECOND,FIRST'), 'extra warhead change not reflected');
+  d.querySelector('[data-tab="relations"]').click(); check(d.querySelector('[data-jump="SECOND"]'), 'extra warhead relation missing');
+  d.querySelector('[data-action="choose-main"]').click(); dialog=d.querySelector('#editor-dialog');
+  const artOption=[...dialog.querySelectorAll('[data-main-file]')].find(button=>button.textContent.includes('artmo.ini'));
+  check(artOption,'art file not selectable'); artOption.click();
+  d.querySelector('[data-category="lasertrail"]').click();
+  check(d.querySelector('[data-entity="TRAIL"]'), 'laser trail registry missing'); d.querySelector('[data-entity="TRAIL"]').click();
+  check(d.querySelector('[data-field="Color"]').value==='255,0,0', 'laser trail fields missing');
+  d.querySelector('[data-category="sections"]').click();
+  await wait(()=>d.querySelector('[data-entity="TANKART"]'), 'art section missing'); d.querySelector('[data-entity="TANKART"]').click();
+  d.querySelector('[data-action="quick-feature"]').click(); dialog=d.querySelector('#editor-dialog'); feature=dialog.querySelector('#quick-feature-type');
+  check(feature.value==='phobos-art-trail', 'art trail feature missing'); dialog.querySelector('[data-quick-choose="LaserTrail0.Type"]').click();
+  option=dialog.querySelector('[data-quick-option="TRAIL"]'); check(option,'trail option missing'); option.checked=true; option.dispatchEvent(new w.Event('change',{bubbles:true}));
+  dialog.querySelector('[data-quick-picker-apply]').click(); dialog.querySelector('[data-quick-next]').click();
+  check(dialog.textContent.includes('LaserTrail0.Type') && dialog.textContent.includes('TRAIL'), 'art trail preview missing');
+  dialog.querySelector('[data-quick-apply]').click(); check(d.body.textContent.includes('LaserTrail0.Type'), 'art trail not applied');
+  check(d.querySelector('[data-jump-field="LaserTrail0.Type"]'), 'art trail reference jump missing');
+  d.querySelector('[data-jump-field="LaserTrail0.Type"]').click(); check(d.body.textContent.includes('[TRAIL]'), 'art trail reference navigation failed');
+  result.textContent='PASS: shield selection, ordered extra warheads, relation navigation, art file switching and laser trail preview';
+ } catch(error) { result.textContent=`FAIL: ${error.message}\n${error.stack}`; }
+});
+</script></body></html>

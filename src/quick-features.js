@@ -165,6 +165,72 @@ export const QUICK_FEATURES = [
     fields: [reference('SuperWeapon', 'superweapon'), reference('SuperWeapon2', 'superweapon'), multiple('SuperWeapons', 'superweapons')],
   },
   {
+    id: 'phobos-art-trail', label: 'Phobos 单位图像激光尾迹', types: ['sections'],
+    description: '在单位图像的美术规则段配置第 0 条激光尾迹。请先确认当前段是目标单位的 Image 定义。',
+    note: '需要已登记的美术尾迹类型。投射物图像使用 LaserTrail.Types；大量尾迹可能降低游戏帧率。',
+    fields: [{ key: 'LaserTrail0.Type', type: 'lasertrail', required: true }, { key: 'LaserTrail0.FLH', type: 'flh', allowClear: true }, defaultableBoolean('LaserTrail0.IsOnTurret')],
+  },
+  {
+    id: 'phobos-shield', label: 'Phobos 单位护盾', types: technos,
+    description: '为单位选择已登记的护盾类型；可先在护盾分类中新建并设置强度、装甲和恢复。',
+    note: '修改护盾定义会影响所有引用它的单位；此处仅修改当前单位的引用。',
+    fields: [{ key: 'ShieldType', type: 'shield', required: true }],
+  },
+  {
+    id: 'phobos-attach', label: 'Phobos 附加效果', types: [...technos, 'warhead'],
+    description: '为单位或弹头选择已登记的 Phobos 附加效果；效果类型可单独新建和编辑。',
+    note: '此功能不修改 Ares 的 AttachEffect.Duration 等内联字段。多个持续时间覆盖值与效果按顺序对应。',
+    fields: [multiple('AttachEffect.AttachTypes', 'attachtypes'), { key: 'AttachEffect.DurationOverrides', type: 'text', allowClear: true }],
+  },
+  {
+    id: 'phobos-crit', label: 'Phobos 弹头暴击', types: ['warhead'],
+    description: '设置暴击概率、附加伤害及可选的暴击弹头。修改共享弹头会影响所有使用该弹头的武器。',
+    note: '额外伤害不是伤害倍率；未指定暴击弹头时使用当前弹头的装甲修正。',
+    fields: [{ key: 'Crit.Chance', type: 'probability', suggested: '10%', required: true }, optionalSigned('Crit.ExtraDamage'), reference('Crit.Warhead', 'warhead'), defaultableBoolean('Crit.ApplyChancePerTarget'), multiple('Crit.Affects', 'phobosTargets'), multiple('Crit.AffectsHouses', 'phobosHouses')],
+  },
+  {
+    id: 'phobos-interceptor', label: 'Phobos 投射物拦截', types: technos,
+    description: '启用拦截并选择使用主武器还是副武器；被拦截投射物还必须单独设置允许拦截。',
+    note: '不会修改共享武器或其他投射物；拦截武器自身投射物的 AA、AG 和武器射程也会影响拦截。',
+    fields: [{ key: 'Interceptor', type: 'boolean', suggested: 'yes', required: true }, { key: 'Interceptor.Weapon', type: 'phobosInterceptorSlot', suggested: '0', required: true }, { key: 'Interceptor.GuardRange', type: 'nonnegativeDecimal', allowClear: true }, { key: 'Interceptor.MinimumGuardRange', type: 'nonnegativeDecimal', allowClear: true }, reference('Interceptor.WeaponOverride', 'weapon')],
+  },
+  {
+    id: 'phobos-interceptable', label: 'Phobos 投射物可拦截', types: ['projectile'],
+    description: '设置此投射物是否允许被拦截，以及拦截耐久和装甲。',
+    note: '投射物可能被多个武器共用；修改会影响所有引用它的武器。',
+    fields: [{ key: 'Interceptable', type: 'boolean', suggested: 'yes', required: true }, optionalInteger('Strength'), { key: 'Armor', type: 'armor', allowClear: true }, defaultableBoolean('Interceptable.DeleteOnIntercept')],
+  },
+  {
+    id: 'phobos-trajectory', label: 'Phobos 投射物轨迹', types: ['projectile'],
+    description: '设置自定义直线或轰炸轨迹及速度。',
+    note: '轨迹会停用冲突的原版 Arcing、ROT、Vertical 和 Inviso 逻辑；不会自动修改这些字段。',
+    fields: [{ key: 'Trajectory', type: 'phobosTrajectory', suggested: 'Straight', required: true }, { key: 'Trajectory.Speed', type: 'nonnegativeDecimal', allowClear: true }, { key: 'Trajectory.Straight.DetonationDistance', type: 'nonnegativeDecimal', allowClear: true }, defaultableBoolean('Trajectory.Straight.PassThrough'), { key: 'Trajectory.Bombard.Height', type: 'decimal', allowClear: true }],
+  },
+  {
+    id: 'phobos-burst', label: 'Phobos 连发间隔', types: ['weapon'],
+    description: '为武器设置每次连发的间隔，及步兵同一动作内连发。',
+    note: '间隔按顺序填写并以逗号分隔，不足的项目沿用最后一项；飞机开火系统不支持 Burst.Delays。',
+    fields: [{ key: 'Burst.Delays', type: 'burstDelays', allowClear: true }, defaultableBoolean('Burst.FireWithinSequence')],
+  },
+  {
+    id: 'phobos-superweapon', label: 'Phobos 超级武器引爆与联动', types: ['superweapon'],
+    description: '配置超级武器引爆弹头或武器，并可选择后续超级武器。',
+    note: '同时设置弹头和武器时武器优先；直接引爆弹头未指定伤害时默认为 0。',
+    fields: [reference('Detonate.Warhead', 'warhead'), reference('Detonate.Weapon', 'weapon'), optionalSigned('Detonate.Damage'), defaultableBoolean('Detonate.AtFirer'), multiple('SW.Next', 'superweapons'), defaultableBoolean('SW.Next.RealLaunch')],
+  },
+  {
+    id: 'phobos-passengers', label: 'Phobos 乘员所属方与消耗', types: ['vehicle', 'aircraft', 'building'],
+    description: '设置所属方同步或定期消耗乘员、返还资金和击杀计分。',
+    note: '消耗乘员会从游戏中移除它们；不适用于普通驻军经验分配。',
+    fields: [defaultableBoolean('Passengers.SyncOwner'), defaultableBoolean('Passengers.SyncOwner.RevertOnExit'), optionalInteger('PassengerDeletion.Rate'), multiple('PassengerDeletion.AllowedHouses', 'phobosHouses'), defaultableBoolean('PassengerDeletion.DontScore'), defaultableBoolean('PassengerDeletion.Soylent'), { key: 'PassengerDeletion.SoylentMultiplier', type: 'multiplier', allowClear: true }],
+  },
+  {
+    id: 'phobos-autodeath', label: 'Phobos 自动销毁', types: technos,
+    description: '设置倒计时或弹药耗尽后自动销毁。',
+    note: '必须指定销毁方式；sell 只适用于有建造动画的建筑。',
+    fields: [{ key: 'AutoDeath.Behavior', type: 'phobosAutoDeath', required: true }, optionalInteger('AutoDeath.AfterDelay'), defaultableBoolean('AutoDeath.OnAmmoDepletion')],
+  },
+  {
     id: 'passenger-fire', label: '乘员车内开火诊断', types: ['infantry', 'vehicle'], kind: 'passenger-fire',
     description: '检查乘员普通及精英武器能否在开放式载具内开火，并可修改相关武器。',
     fields: [],
@@ -298,6 +364,37 @@ function warningsFor(project, section, type, feature, values) {
     }
     if (duplicated.size) warnings.push(`同一超级武器出现在多个位置：${[...duplicated].join('、')}；是否重复提供取决于游戏规则。`);
   }
+  if (feature.id === 'phobos-art-trail') warnings.push('请确认当前规则段是目标单位的 Image 美术定义；多个单位使用该图像时都会受到影响。大量尾迹可能降低帧率。');
+  if (feature.id === 'phobos-interceptor') {
+    const slot = current('Interceptor.Weapon') === '1' ? 'Secondary' : 'Primary';
+    const weapon = project.get(section, slot)?.value.trim();
+    if (!weapon || !project.section(weapon)) warnings.push(`未找到拦截使用的 ${slot} 武器，请先配置。`);
+    else {
+      const projectile = project.get(weapon, 'Projectile')?.value.trim();
+      if (!projectile || !project.section(projectile)) warnings.push(`武器 [${weapon}] 的投射物未加载，无法核对 AA / AG。`);
+      else warnings.push(`请核对拦截武器投射物 [${projectile}] 的 AA / AG 是否覆盖被拦截投射物的高度。`);
+      const range = Number(project.get(weapon, 'Range')?.value), guard = Number(current('Interceptor.GuardRange'));
+      if (range > 0 && guard > range) warnings.push(`拦截警戒范围超过武器 Range=${range}，实际开火仍受武器射程限制。`);
+    }
+  }
+  if (feature.id === 'phobos-interceptable') warnings.push('此投射物可能被多个武器共用；修改会影响所有引用。');
+  if (feature.id === 'phobos-trajectory') {
+    const conflicts = ['Arcing', 'Vertical', 'Inviso'].filter(key => enabled(project.get(section, key)?.value));
+    if (Number(project.get(section, 'ROT')?.value) > 0) conflicts.push('ROT');
+    if (conflicts.length) warnings.push(`自定义轨迹会停用冲突的原版轨迹逻辑：${conflicts.join('、')}。`);
+    warnings.push('此投射物可能被多个武器共用；修改会影响所有引用。');
+  }
+  if (feature.id === 'phobos-superweapon') {
+    if (current('Detonate.Warhead') && current('Detonate.Weapon')) warnings.push('同时配置引爆武器与弹头时，武器优先。');
+    if (current('Detonate.Warhead') && !current('Detonate.Weapon') && !current('Detonate.Damage')) warnings.push('单独引爆弹头且未设置伤害时，默认伤害为 0。');
+    if (tokens(current('SW.Next')).some(id => normalize(id) === normalize(section))) warnings.push('后续超级武器包含自身，可能造成递归，请检查。');
+  }
+  if (feature.id === 'phobos-passengers' && Number(current('PassengerDeletion.Rate')) > 0) warnings.push('已启用消耗乘员，符合所属方条件的乘员会被移除。');
+  if (feature.id === 'phobos-autodeath') {
+    if (normalize(current('AutoDeath.Behavior')) === 'sell' && type !== 'building') warnings.push('sell 仅用于具有建造动画的建筑。');
+    if (!Number(current('AutoDeath.AfterDelay')) && !enabled(current('AutoDeath.OnAmmoDepletion'))) warnings.push('没有启用倒计时或弹药耗尽条件；其他已配置条件仍可能触发。');
+  }
+  if (feature.id === 'phobos-crit') warnings.push('此弹头可能被多个武器共用；修改会影响所有引用。');
   if (feature.id === 'transport' || feature.id === 'passenger-experience') {
     if (disabled(current('Trainable'))) warnings.push('Trainable 已关闭，载具无法通过经验晋升；乘员能否晋升还取决于其自身配置。');
     if (disabled(current('Experience.FromPassengers'))) warnings.push('Experience.FromPassengers 已关闭，载具不会因乘员击杀获得经验；射击乘员的经验还取决于载具等级和炮手逻辑。');
@@ -329,6 +426,7 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
   const feature = quickFeaturesFor(type).find(item => item.id === featureId);
   if (!feature || feature.kind) throw new Error('此对象类型不支持该快捷功能。');
   if (!project.section(section)) throw new Error(`找不到规则段 [${section}]。`);
+  if (feature.id === 'phobos-art-trail' && !/^art(?:mo|md)\.ini$/i.test(project.mainPath)) throw new Error('请先选择 artmo.ini 或 artmd.ini 美术主文件。');
   const selected = {};
   for (const field of feature.fields) {
     const target = field.targetSection || section;
@@ -346,9 +444,22 @@ export function prepareQuickFeature(project, { featureId, type, section, values 
       throw new Error(`${field.key} 需要填写 ${field.type === 'signed' ? '-2147483648' : '0'} 到 2147483647 之间的整数。`);
     }
     if (field.type === 'multiplier' && !validMultiplier(raw) && raw !== existing?.value) throw new Error(`${field.key} 需要填写非负倍率或百分比，例如 1、0.5 或 50%。`);
+    if (field.type === 'probability' && raw !== existing?.value && (!validMultiplier(raw) || Number(raw.replace(/%$/, '')) > (raw.endsWith('%') ? 100 : 1))) throw new Error(`${field.key} 需要填写 0 到 1 或 0% 到 100%。`);
+    if (field.type === 'decimal' && raw !== existing?.value && (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) || !Number.isFinite(Number(raw)))) throw new Error(`${field.key} 需要填写数字。`);
+    if (field.type === 'nonnegativeDecimal' && raw !== existing?.value && (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) || !Number.isFinite(Number(raw)))) throw new Error(`${field.key} 需要填写非负数字。`);
+    if (field.type === 'flh' && raw !== existing?.value && !/^[+-]?\d+\s*,\s*[+-]?\d+\s*,\s*[+-]?\d+$/.test(raw)) throw new Error(`${field.key} 需要依次填写三个整数：前后,左右,高度。`);
+    if (field.type === 'burstDelays' && raw !== existing?.value && raw.split(',').some(value => !validInt(value.trim()) && value.trim() !== '-1')) throw new Error('Burst.Delays 需要填写非负整数或 -1，并用逗号分隔。');
+    if (['phobosInterceptorSlot', 'phobosTrajectory', 'phobosAutoDeath'].includes(field.type) && raw !== existing?.value && !enumChoices(field.type).some(item => normalize(item.id) === normalize(raw))) throw new Error(`${field.key} 需要选择已知选项。`);
+
     if (field.type === 'boolean' && !/^(yes|no|true|false|1|0)$/i.test(raw) && raw !== existing?.value) throw new Error(`${field.key} 需要选择“是”或“否”。`);
     if (field.type === 'pipScale' && !enumChoices('pipScale').some(item => normalize(item.id) === normalize(raw)) && raw !== existing?.value) throw new Error('PipScale 需要选择已知类型，或保留原有值。');
-    if ((field.type === 'weapon' || field.type === 'superweapon') && raw !== existing?.value && !/^(none|<none>)$/i.test(raw) && !project.section(raw)) throw new Error(`找不到 ${field.key} 所选对象 [${raw}] 的定义。`);
+    if ((['weapon', 'superweapon', 'warhead', 'shield', 'radiation', 'lasertrail'].includes(field.type)) && raw !== existing?.value && !/^(none|<none>)$/i.test(raw) && !project.section(raw)) throw new Error(`找不到 ${field.key} 所选对象 [${raw}] 的定义。`);
+    const registry = ({ shield: 'ShieldTypes', radiation: 'RadiationTypes', attachtypes: 'AttachEffectTypes', lasertrail: 'LaserTrailTypes' })[field.type];
+    if (registry && raw !== existing?.value) {
+      const registered = new Set(listTypes(project, registry).map(normalize));
+      const previous = new Set(tokens(existing?.value).map(normalize));
+      for (const id of tokens(raw)) if ((!registered.has(normalize(id)) || !project.section(id)) && !previous.has(normalize(id))) throw new Error(`${field.key} 所选 [${id}] 需要已定义并登记在 [${registry}]。`);
+    }
     selected[field.key] = raw;
   }
   if (feature.id === 'payload') {

@@ -1,4 +1,4 @@
-import { IniProject, parseFile, serialize, listTypes } from './ini.js';
+import { IniProject, parseFile, serialize, listTypes, dirtyProjectWarnings } from './ini.js';
 import { DEMO_MAIN, DEMO_UNITS } from './demo.js';
 import { GameResources } from './resources.js';
 import { STANDARD_ARMORS, GLOBAL_SECTIONS, globalFieldInfo, countriesFor, sidesFor, armorsFor, prerequisitesFor, mergeSelections, updateVerses } from './rule-schema.js';
@@ -13,6 +13,8 @@ import { analyzeConstruction, analyzeWeaponEffect } from './rule-analysis.js';
 import { compareHistoryBytes } from './history-diff.js';
 import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
+import { detectPhobos } from './phobos-version.js';
+import { extraWarheadRows, prepareExtraWarheads } from './phobos-warheads.js';
 
 const enc = new TextEncoder();
 const app = document.querySelector('#app');
@@ -23,8 +25,9 @@ const editorDialog = document.querySelector('#editor-dialog');
 let historyInstance = 0;
 dialog.addEventListener('cancel', () => { historyInstance++; dialog.classList.remove('history-dialog'); });
 const toast = document.querySelector('#toast');
-const state = { project: null, resources: null, desktopSession: null, demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), pendingFields: new Map(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
+const state = { project: null, resources: null, desktopSession: null, phobos: null, visitedMainPaths: new Set(), demo: true, category: 'all', selected: '', tab: 'basic', search: '', owner: '', notice: true, entities: [], changedSections: new Set(), pendingFields: new Map(), listLimit: 250, globalSearch: '', armorSearch: '', armorOpen: false };
 const navigation = { entries: [], index: -1, trail: [] };
+const expandedPhobosPanels = new Set();
 let pointerDown = false;
 let renderPending = false;
 let composing = false;
@@ -73,11 +76,15 @@ const CATEGORIES = [
   { id: 'weapon', label: '武器', icon: 'weapon' },
   { id: 'projectile', label: '投射物', icon: 'projectile' },
   { id: 'warhead', label: '弹头', icon: 'warhead' },
+  { id: 'shield', label: '护盾', icon: 'shield', list: 'ShieldTypes' },
+  { id: 'attachtype', label: '附加效果', icon: 'shield', list: 'AttachEffectTypes' },
+  { id: 'radiation', label: '辐射类型', icon: 'shield', list: 'RadiationTypes' },
+  { id: 'lasertrail', label: '激光尾迹', icon: 'shield', list: 'LaserTrailTypes' },
   { id: 'sections', label: '所有规则段', icon: 'all' },
 ];
 const labelFor = type => CATEGORIES.find(item => item.id === type)?.label || '对象';
 const unitTypes = new Set(['infantry', 'vehicle', 'aircraft', 'building']);
-const objectTypes = new Set([...unitTypes, 'superweapon', 'weapon', 'projectile', 'warhead']);
+const objectTypes = new Set([...unitTypes, 'superweapon', 'weapon', 'projectile', 'warhead', 'shield', 'attachtype', 'radiation', 'lasertrail']);
 const weaponKey = key => /^(primary|secondary|eliteprimary|elitesecondary|occupyweapon|eliteoccupyweapon|deathweapon|weapon\d+|eliteweapon\d+)$/i.test(key);
 
 function buildEntities() {
@@ -133,6 +140,7 @@ function buildEntities() {
       weaponIds.push(id);
     }
   }
+  for (const item of entities.filter(item => item.type === 'superweapon')) for (const key of ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon']) weaponIds.push(val(item.id, key));
   // 有些武器规则没有登记或被单位直接引用，但仍可能使用共享投射物。
   // 同时要求具备武器特征，避免把全局段中的同名字段误认为武器。
   for (const section of project.sections.values()) {
@@ -163,7 +171,19 @@ function buildEntities() {
   for (const weapon of entities.filter(entity => entity.type === 'weapon')) {
     for (const reference of weaponWarheadReferences(project, weapon.id)) warheadIds.push(reference.id);
   }
+  for (const item of entities.filter(item => item.type === 'superweapon')) for (const key of ['SW.Warhead', 'Detonate.Warhead']) warheadIds.push(val(item.id, key));
+  for (let i = 0; i < warheadIds.length; i++) {
+    const id = warheadIds[i];
+    const linked = val(id, 'Crit.Warhead').trim();
+    if (linked && !warheadIds.some(item => lower(item) === lower(linked))) warheadIds.push(linked);
+  }
   for (const id of unique(warheadIds)) add(id, 'warhead');
+  for (const entity of [...entities]) {
+    const keys = unitTypes.has(entity.type) ? [['ShieldType', 'shield'], ['AttachEffect.AttachTypes', 'attachtype']]
+      : entity.type === 'warhead' ? [['AttachEffect.AttachTypes', 'attachtype'], ['AttachEffect.RemoveTypes', 'attachtype']]
+        : entity.type === 'weapon' ? [['RadType', 'radiation'], ['AttachEffect.RequiredTypes', 'attachtype'], ['AttachEffect.DisallowedTypes', 'attachtype']] : [];
+    for (const [field, type] of keys) for (const id of val(entity.id, field).split(',').map(item => item.trim()).filter(Boolean)) add(id, type);
+  }
   return entities;
 }
 
@@ -215,7 +235,7 @@ function noticeMarkup() {
     const main = state.project.resolve(state.project.mainPath);
     const origin = main?.sourceArchive ? `MIX：${main.sourceArchive}` : '独立文件';
     const hasIconSource = (art || state.entities.some(item => item.type === 'superweapon' && val(item.id, 'SidebarPCX'))) && (archives.length || pcxFiles.size);
-    out += `<div class="resource-status"><span>${icon('info', 14)} 规则来源 <strong>${h(origin)}</strong></span><span>文字资源 <strong>${strings.size ? `已加载 ${strings.size} 条` : '未找到'}</strong></span><span>游戏图标 <strong>${hasIconSource ? '已连接资源' : '未找到'}</strong></span><span class="resource-hint" title="${h(state.desktopSession?.directory || '')}">${state.desktopSession ? `保存目录：${h(state.desktopSession.directory)}` : strings.size && hasIconSource ? '使用游戏目录中的资源' : '选择游戏目录可加载中文名称和游戏图标'}</span></div>`;
+    out += `<div class="resource-status"><span>${icon('info', 14)} 规则来源 <strong>${h(origin)}</strong></span><span>文字资源 <strong>${strings.size ? `已加载 ${strings.size} 条` : '未找到'}</strong></span><span>游戏图标 <strong>${hasIconSource ? '已连接资源' : '未找到'}</strong></span><span title="仅检查目录中的 DLL 版本；实际加载状态和启动参数需另行确认">Phobos <strong>${state.phobos?.status === 'detected' ? h(state.phobos.version) : state.phobos?.status === 'unknown' ? '版本未识别' : state.desktopSession ? '未检测到' : '未随文件导入'}</strong></span><span class="resource-hint" title="${h(state.desktopSession?.directory || '')}">${state.desktopSession ? `保存目录：${h(state.desktopSession.directory)}` : strings.size && hasIconSource ? '使用游戏目录中的资源' : '选择游戏目录可加载中文名称和游戏图标'}</span></div>`;
   }
   return out;
 }
@@ -475,7 +495,7 @@ function actualEntity(entity) {
   return entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
 }
 function quickFeatureButton(entity) {
-  return quickFeaturesFor(actualEntity(entity).type).length ? '<button type="button" class="btn sm" data-action="quick-feature">＋ 快捷功能</button>' : '';
+  return quickFeaturesFor(actualEntity(entity).type).some(feature => feature.id !== 'phobos-art-trail' || /^art(?:mo|md)\.ini$/i.test(state.project.mainPath)) ? '<button type="button" class="btn sm" data-action="quick-feature">＋ 快捷功能</button>' : '';
 }
 function fieldInfoFor(entity, key) {
   const target = actualEntity(entity);
@@ -507,11 +527,20 @@ function choicesFor(kind, value) {
   if (kind === 'armor') return armorsFor(state.project, value);
   if (kind === 'side') return sidesFor(state.project, value);
   if (kind === 'prerequisite') return prerequisitesFor(state.project, state.resources?.strings, value);
-  if (['weapon', 'warhead', 'projectile'].includes(kind)) {
+  if (['weapon', 'warhead', 'projectile', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(kind)) {
     const label = labelFor(kind);
-    const choices = state.entities.filter(item => item.type === kind).map(item => ({ id: item.id, label: item.name, group: item.exists ? `已加载的${label}` : `未找到定义的${label}` }));
+    const registry = ({ shield: 'ShieldTypes', attachtype: 'AttachEffectTypes', radiation: 'RadiationTypes', lasertrail: 'LaserTrailTypes' })[kind];
+    const registered = registry ? new Set(listTypes(state.project, registry).map(lower)) : null;
+    const choices = state.entities.filter(item => item.type === kind).map(item => ({ id: item.id, label: item.name, group: !item.exists ? `未找到定义的${label}` : registered && !registered.has(lower(item.id)) ? `未登记的${label}` : `已加载的${label}` }));
     const id = value.trim();
     if (id && !choices.some(option => lower(option.id) === lower(id))) choices.push({ id, label: id, group: '当前未登记的代码' });
+    return choices;
+  }
+  if (kind === 'attachtypes') {
+    const registered = new Set(listTypes(state.project, 'AttachEffectTypes').map(lower));
+    const choices = state.entities.filter(item => item.type === 'attachtype').map(item => ({ id: item.id, label: item.name, group: !item.exists ? '未找到定义的附加效果' : registered.has(lower(item.id)) ? '已登记的附加效果' : '未登记的附加效果' }));
+    const known = new Set(choices.map(item => lower(item.id)));
+    for (const id of value.split(',').map(item => item.trim()).filter(Boolean)) if (!known.has(lower(id))) { choices.push({ id, label: id, group: '当前未登记的代码' }); known.add(lower(id)); }
     return choices;
   }
   if (kind === 'superweapon' || kind === 'superweapons') {
@@ -544,21 +573,30 @@ function choiceField(entity, key, info, kind, field) {
 }
 
 function referenceType(entity, key) {
-  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
   if (!actual) return '';
   let type = '';
   if (unitTypes.has(actual.type) && weaponKey(key)) type = 'weapon';
   else if (unitTypes.has(actual.type) && /^(superweapon|superweapon2)$/i.test(key)) type = 'superweapon';
   else if (actual.type === 'weapon' && /^projectile$/i.test(key)) type = 'projectile';
   else if (actual.type === 'weapon' && /^(warhead|ivanbomb\.warhead)$/i.test(key)) type = 'warhead';
-  else if (actual.type === 'projectile' && /^(airburstweapon|shrapnelweapon)$/i.test(key)) type = 'weapon';
-  else if (actual.type === 'superweapon' && /^sw\.warhead$/i.test(key)) type = 'warhead';
-  else if (actual.type === 'superweapon' && /^(weapontype|nuke\.payload)$/i.test(key)) type = 'weapon';
+  else if (actual.type === 'projectile' && /^(airburstweapon|shrapnelweapon|returnweapon|interceptable\.weaponoverride)$/i.test(key)) type = 'weapon';
+  else if (unitTypes.has(actual.type) && /^shieldtype$/i.test(key)) type = 'shield';
+  else if (unitTypes.has(actual.type) && /^interceptor\.weaponoverride$/i.test(key)) type = 'weapon';
+  else if (actual.type === 'weapon' && /^feedbackweapon$/i.test(key)) type = 'weapon';
+  else if (actual.type === 'weapon' && /^radtype$/i.test(key)) type = 'radiation';
+  else if (actual.type === 'warhead' && /^crit\.warhead$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'shield' && /^breakweapon$/i.test(key)) type = 'weapon';
+  else if (actual.type === 'attachtype' && /^expireweapon$/i.test(key)) type = 'weapon';
+  else if (actual.type === 'radiation' && /^radsitewarhead$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'sections' && /^art(?:mo|md)\.ini$/i.test(state.project.mainPath) && /^lasertrail\d+\.type$/i.test(key)) type = 'lasertrail';
+  else if (actual.type === 'superweapon' && /^(sw\.warhead|detonate\.warhead)$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'superweapon' && /^(weapontype|nuke\.payload|detonate\.weapon)$/i.test(key)) type = 'weapon';
   return type;
 }
 
 function fieldReference(entity, key, value) {
-  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) : entity;
+  const actual = entity.type === 'sections' ? state.entities.find(item => item.type !== 'sections' && lower(item.id) === lower(entity.id)) || entity : entity;
   if (!actual) return null;
   const type = referenceType(entity, key);
   if (!type) return null;
@@ -577,7 +615,7 @@ function fieldReference(entity, key, value) {
 
 function referenceChoiceMarkup(entity, key) {
   const kind = referenceType(entity, key);
-  if (!['weapon', 'warhead', 'projectile'].includes(kind)) return '';
+  if (!['weapon', 'warhead', 'projectile', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(kind)) return '';
   return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="选择${h(labelFor(kind))}">选择</button>`;
 }
 
@@ -589,11 +627,13 @@ function enumKindFor(entity, key) {
 function structuredChoiceMarkup(entity, key) {
   const actual = actualEntity(entity), name = lower(key);
   let kind = enumKindFor(entity, key);
-  if (!kind && unitTypes.has(actual.type) && name === 'armor') kind = 'armor';
+  if (!kind && (unitTypes.has(actual.type) || ['shield', 'projectile'].includes(actual.type)) && name === 'armor') kind = 'armor';
   else if (!kind && unitTypes.has(actual.type) && /^(superweapon|superweapon2|superweapons)$/.test(name)) kind = name === 'superweapons' ? 'superweapons' : 'superweapon';
   else if (!kind && actual.type === 'global' && actual.globalKind === 'country' && name === 'side') kind = 'side';
   else if (!kind && ((unitTypes.has(actual.type) && /^(owner|requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'superweapon' && /^sw\.(requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'global' && lower(actual.id) === 'sides'))) kind = 'country';
   else if (!kind && unitTypes.has(actual.type) && name === 'prerequisite') kind = 'prerequisite';
+  else if (!kind && (unitTypes.has(actual.type) || ['weapon', 'warhead'].includes(actual.type)) && /^attacheffect\.(attachtypes|removetypes|requiredtypes|disallowedtypes)$/.test(name)) kind = 'attachtypes';
+  else if (!kind && actual.type === 'superweapon' && name === 'sw.next') kind = 'superweapons';
   if (!kind) return '';
   const title = enumDefinition(kind)?.title || `选择${fieldInfoFor(entity, key).label}`;
   return `<button type="button" class="split-button" data-action="choose-options" data-kind="${h(kind)}" data-key="${h(key)}" aria-label="${h(title)}">选择</button>`;
@@ -611,14 +651,19 @@ function fieldMarkup(entity, key) {
   const label = info.label;
   const enumKind = enumKindFor(entity, key);
   if (enumKind && enumKind !== 'boolean' && entity.type !== 'sections') return choiceField(entity, key, info, enumKind, field);
-  if (unitTypes.has(entity.type) && lower(key) === 'armor') return choiceField(entity, key, info, 'armor', field);
+  if ((unitTypes.has(entity.type) || ['shield', 'projectile'].includes(entity.type)) && lower(key) === 'armor') return choiceField(entity, key, info, 'armor', field);
   if (unitTypes.has(entity.type) && /^(superweapon|superweapon2|superweapons)$/i.test(key)) return choiceField(entity, key, info, lower(key) === 'superweapons' ? 'superweapons' : 'superweapon', field);
   if (entity.type === 'global' && entity.globalKind === 'country' && lower(key) === 'side') return choiceField(entity, key, info, 'side', field);
   if ((unitTypes.has(entity.type) && /^(owner|requiredhouses|forbiddenhouses)$/i.test(key)) || (entity.type === 'superweapon' && /^sw\.(requiredhouses|forbiddenhouses)$/i.test(key)) || (entity.type === 'global' && lower(entity.id) === 'sides')) return choiceField(entity, key, info, 'country', field);
   if (unitTypes.has(entity.type) && lower(key) === 'prerequisite') return choiceField(entity, key, info, 'prerequisite', field);
+  if ((unitTypes.has(entity.type) || ['weapon', 'warhead'].includes(entity.type)) && /^attacheffect\.(attachtypes|removetypes|requiredtypes|disallowedtypes)$/i.test(key)) return choiceField(entity, key, info, 'attachtypes', field);
+  if (entity.type === 'superweapon' && /^sw\.next$/i.test(key)) return choiceField(entity, key, info, 'superweapons', field);
   const source = field ? `${sourceName(field.file)}${field.line.patch !== undefined ? ' · 已修改' : ''}` : '未定义 · 输入后添加';
   const raw = field?.value || '';
   const modified = field?.line.patch !== undefined ? 'is-modified' : '';
+  if (entity.type === 'weapon' && lower(key) === 'extrawarheads') {
+    return `<div class="field" title="${h(info.description)}">${fieldNameMarkup(info, key)}<div class="value-control"><input class="${modified}" aria-label="${h(label)}" value="${h(raw)}" placeholder="未配置" readonly><button type="button" class="split-button" data-action="extra-warheads">组合编辑</button></div><div class="field-source">${h(source)}</div></div>`;
+  }
   let control;
   const projectileBoolean = entity.type === 'projectile' && projectileBooleanFields.has(lower(key)) && (!raw || /^(yes|no|true|false)$/i.test(raw));
   if ((['global', 'sections', 'superweapon', 'projectile'].includes(entity.type) && /^(yes|no|true|false)$/i.test(raw)) || projectileBoolean || (enumKind === 'boolean' && (!raw || /^(yes|no|true|false)$/i.test(raw)))) {
@@ -680,8 +725,9 @@ function analysisActions(entity) {
 }
 function renderBasic(entity) {
   const isUnit = unitTypes.has(entity.type);
-  const fields = entity.type === 'weapon' ? weaponBasic : entity.type === 'projectile' ? projectileBasic : entity.type === 'warhead' ? warheadBasic : entity.type === 'superweapon' ? superweaponBasic : unitBasic;
-  const title = isUnit ? '单位属性' : entity.type === 'weapon' ? '武器属性' : entity.type === 'projectile' ? '投射物属性' : entity.type === 'superweapon' ? '超级武器属性' : '弹头属性';
+  const phobosBasics = { shield: ['Strength', 'InitialStrength', 'Armor', 'InheritArmorFromTechno', 'Powered', 'SelfHealing', 'SelfHealing.Rate', 'Respawn', 'Respawn.Rate', 'AbsorbPercent', 'PassPercent', 'BreakWeapon'], attachtype: ['Duration', 'Cumulative', 'Cumulative.MaxCount', 'Animation', 'FirepowerMultiplier', 'ArmorMultiplier', 'SpeedMultiplier', 'ROFMultiplier', 'WeaponRange.Multiplier', 'WeaponRange.ExtraRange', 'Cloakable', 'ExpireWeapon'], radiation: ['RadDurationMultiple', 'RadApplicationDelay', 'RadApplicationDelay.Building', 'RadLevelMax', 'RadColor', 'RadSiteWarhead', 'RadSiteWarhead.Detonate', 'RadHasOwner', 'RadHasInvoker'], lasertrail: ['IsHouseColor', 'Color', 'FadeDuration', 'Thickness', 'SegmentLength', 'IgnoreVertical', 'IsIntense', 'CloakVisible', 'CloakVisible.DetectedOnly'] };
+  const fields = entity.type === 'weapon' ? weaponBasic : entity.type === 'projectile' ? projectileBasic : entity.type === 'warhead' ? warheadBasic : entity.type === 'superweapon' ? superweaponBasic : phobosBasics[entity.type] || unitBasic;
+  const title = isUnit ? '单位属性' : `${labelFor(entity.type)}属性`;
   let body = `<div class="detail-body">${usageMarkup(entity)}${analysisActions(entity)}<div class="section-head"><div><h3>${title}</h3><p>编辑现有值，或为未定义的属性添加值。</p></div><span class="section-num">01 / GENERAL</span></div><div class="field-grid">${fields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (isUnit) {
     const extraHouses = ['RequiredHouses', 'ForbiddenHouses'].filter(key => state.project.get(entity.id, key));
@@ -692,7 +738,9 @@ function renderBasic(entity) {
       body += `<div class="block-divider"></div><div class="section-head"><div><h3>提供的超级武器</h3><p>选择此对象提供的超级武器；具体可用性还受其他规则限制。</p></div></div><div class="field-grid">${granted.map(key => fieldMarkup(entity, key)).join('')}</div>`;
     }
   }
+  if (isUnit) body += `<details class="phobos-panel" data-phobos-panel="${h(lower(entity.id))}" ${expandedPhobosPanels.has(lower(entity.id)) ? 'open' : ''}><summary>Phobos 扩展</summary><p>需要游戏实际加载兼容的 Phobos；与现有 Ares 附加效果相互独立。</p><div class="field-grid">${['ShieldType', 'AttachEffect.AttachTypes', 'ImmuneToCrit'].map(key => fieldMarkup(entity, key)).join('')}</div></details>`;
   if (entity.type === 'weapon') {
+    body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 额外弹头与连发</h3><p>额外弹头及其参数按顺序对应；留空使用游戏默认值。</p></div><button type="button" class="btn sm" data-action="extra-warheads">配置额外弹头</button></div><div class="field-grid">${['ExtraWarheads', 'ExtraWarheads.DamageOverrides', 'ExtraWarheads.DetonationChances', 'ExtraWarheads.FullDetonation', 'Burst.Delays', 'Burst.FireWithinSequence', 'FeedbackWeapon', 'RadType'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
     const existing = [...state.project.section(entity.id).fields.values()].filter(field => /^IvanBomb\./i.test(field.name));
     if (existing.length || usesIvanBomb(state.project, entity.id)) {
       const keys = ['IvanBomb.Warhead', 'IvanBomb.Damage', 'IvanBomb.Delay'];
@@ -702,9 +750,14 @@ function renderBasic(entity) {
       body += `<div class="block-divider"></div><div class="section-head"><div><h3>附着炸弹</h3><p>直接命中弹头需启用 IvanBomb=yes 才会应用炸弹效果。${h(note)}</p></div></div><div class="field-grid">${keys.map(key => fieldMarkup(entity, key)).join('')}</div>`;
     }
   }
+  if (entity.type === 'projectile') body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 拦截与轨迹</h3><p>轨迹与原版 Arcing、ROT、Vertical、Inviso 逻辑不应组合使用。</p></div></div><div class="field-grid">${['Interceptable', 'Strength', 'Armor', 'Trajectory', 'Trajectory.Speed', 'Trajectory.Straight.DetonationDistance', 'Trajectory.Straight.PassThrough', 'Trajectory.Bombard.Height', 'ReturnWeapon'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (entity.type === 'projectile') body += `<div class="block-divider"></div><div class="section-head"><div><h3>空爆、分裂与弹片</h3><p>未定义的字段不会自动写入；部分效果需要相应扩展及其他参数配合。</p></div><span class="section-num">02 / EFFECTS</span></div><div class="field-grid">${projectileEffects.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (entity.type === 'superweapon') body += `<div class="block-divider"></div><div class="section-head"><div><h3>效果与限制</h3><p>未定义的值由游戏或武器类型决定；不同类型支持的参数可能不同。</p></div><span class="section-num">02 / EFFECTS</span></div><div class="field-grid">${superweaponEffects.map(key => fieldMarkup(entity, key)).join('')}</div>`;
-  if (entity.type === 'warhead') body += `<div class="block-divider"></div>${renderVerses(entity)}`;
+  if (entity.type === 'warhead') {
+    body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 暴击、护盾与附加效果</h3><p>弹头可能被多个武器共用，修改会影响所有引用者。</p></div></div><div class="field-grid">${['Crit.Chance', 'Crit.ExtraDamage', 'Crit.Warhead', 'Crit.ApplyChancePerTarget', 'Crit.Affects', 'Crit.AffectsHouses', 'Shield.Penetrate', 'Shield.Break', 'AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
+    body += `<div class="block-divider"></div>${renderVerses(entity)}`;
+  }
+  if (entity.type === 'superweapon') body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 超级武器联动</h3><p>同时设置引爆武器和弹头时，武器优先。</p></div></div><div class="field-grid">${['Detonate.Warhead', 'Detonate.Weapon', 'Detonate.Damage', 'Detonate.AtFirer', 'SW.Next', 'SW.Next.RealLaunch'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
   body += `<div class="source-bar">${icon('shield', 16)}<div><strong>保留原文件结构</strong><br>${state.desktopSession ? '保存前自动备份来源文件；MIX 内的规则保存为独立 INI，不修改资源包。' : '已有属性在来源规则中修改；MIX 内的规则会导出为独立 INI，不修改资源包。'}</div></div></div>`;
   return body;
 }
@@ -729,7 +782,27 @@ function superweaponsReferencing(id, keys) {
     superweapon, keys: keys.filter(key => lower(val(superweapon.id, key).trim()) === lower(id)),
   })).filter(item => item.keys.length);
 }
+function phobosUsers(entity) {
+  if (entity.type === 'lasertrail') {
+    const users = [];
+    for (const section of state.project.sections.values()) for (const field of section.fields.values()) {
+      if (!/^lasertrail(?:\d+\.type|\.types)$/i.test(field.name)) continue;
+      if (field.value.split(',').some(value => lower(value.trim()) === lower(entity.id))) users.push({ entity: { id: section.name, name: section.name, type: 'sections', exists: true }, key: field.name });
+    }
+    return users;
+  }
+  const fields = entity.type === 'shield' ? ['ShieldType'] : entity.type === 'attachtype'
+    ? ['AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes', 'AttachEffect.RequiredTypes', 'AttachEffect.DisallowedTypes']
+    : entity.type === 'radiation' ? ['RadType'] : [];
+  return state.entities.filter(item => item.type !== 'sections' && item.type !== 'global' && item.id !== entity.id).flatMap(item => fields
+    .filter(key => val(item.id, key).split(',').some(value => lower(value.trim()) === lower(entity.id)))
+    .map(key => ({ entity: item, key })));
+}
 function usageMarkup(entity) {
+  if (['shield', 'attachtype', 'radiation', 'lasertrail'].includes(entity.type)) {
+    const users = phobosUsers(entity);
+    return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${users.length} 处引用</strong><p>修改此定义可能影响所有使用者；未加载的规则可能未列出。</p></div>${users.length ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+  }
   if (entity.type === 'projectile') {
     const weapons = weaponsReferencingProjectile(entity.id), count = weapons.length;
     return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个武器引用此投射物</strong><p>修改会影响引用它的武器；未加载或其他特殊引用可能未列出。</p>${count ? `<p>例如：${h(weapons.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
@@ -738,15 +811,16 @@ function usageMarkup(entity) {
   const weapon = entity.type === 'weapon';
   const users = weapon ? referencesTo(entity.id) : weaponsReferencingWarhead(entity.id).map(item => item.weapon);
   const count = users.length;
-  const supers = superweaponsReferencing(entity.id, weapon ? ['WeaponType', 'Nuke.Payload'] : ['SW.Warhead']).length;
-  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p>${count ? `<p>例如：${h(users.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count || supers ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+  const supers = superweaponsReferencing(entity.id, weapon ? ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon'] : ['SW.Warhead', 'Detonate.Warhead']).length;
+  const critParents = weapon ? [] : state.entities.filter(item => item.type === 'warhead' && lower(val(item.id, 'Crit.Warhead').trim()) === lower(entity.id));
+  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${critParents.length ? `、${critParents.length} 个暴击弹头` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p>${count ? `<p>例如：${h(users.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count || supers || critParents.length ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
 }
 function grantedSuperweapons(entity) {
   return ['SuperWeapon', 'SuperWeapon2', 'SuperWeapons'].flatMap(key => val(entity.id, key).split(',')
     .map(id => id.trim()).filter(id => id && !/^(?:none|<none>)$/i.test(id)).map(id => ({ id, key })));
 }
 function refMarkup(title, id, type, source = null) {
-  const target = entityFor(id, type) || entityFor(id);
+  const target = entityFor(id, type) || entityFor(id) || (type === 'sections' && state.project.section(id) ? { id, type, name: id } : null);
   const heading = source ? fieldNameMarkup(fieldInfoFor(source.entity, source.key), source.key, 'ref-title', source.note) : `<div class="ref-title">${h(title)}</div>`;
   const via = source ? `${fieldInfoFor(source.entity, source.key).label} / ${source.key}${source.note ? `（${source.note}）` : ''}` : title;
   const name = target && lower(target.name) !== lower(target.id) ? ` · ${h(target.name)}` : '';
@@ -757,33 +831,42 @@ function renderRelations(entity) {
   let description = '';
   if (entity.type === 'weapon') {
     const users = referencesTo(entity.id);
-    const supers = superweaponsReferencing(entity.id, ['WeaponType', 'Nuke.Payload']);
+    const supers = superweaponsReferencing(entity.id, ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon']);
     description = `根据已加载对象的常用武器字段和超级武器设置，发现 ${users.length} 个对象及 ${supers.length} 个超级武器引用；其他特殊武器逻辑可能未列出。`;
     items = refMarkup('', val(entity.id, 'Projectile'), 'projectile', { entity, key: 'Projectile' });
     items += refMarkup('弹头', val(entity.id, 'Warhead'), 'warhead', { entity, key: 'Warhead' });
     const bomb = weaponWarheadReferences(state.project, entity.id).find(ref => ref.key === 'IvanBomb.Warhead');
     if (bomb) items += refMarkup('', bomb.id, 'warhead', { entity, key: bomb.key, note: bomb.source === 'global' ? '沿用 [CombatDamage]IvanWarhead' : '' });
+    for (const ref of weaponWarheadReferences(state.project, entity.id).filter(ref => ref.key === 'ExtraWarheads')) items += refMarkup('', ref.id, 'warhead', { entity, key: ref.key, note: `第 ${ref.index + 1} 个额外弹头` });
     if (users.length || supers.length) items += `<div class="block-divider"></div><div class="section-head" data-ref-users><div><h3>使用此武器的对象</h3><p>修改武器可能同时影响这些对象。</p></div></div>` + users.map(user => refMarkup(labelFor(user.type), user.id, user.type)).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('');
   } else if (entity.type === 'projectile') {
     const weapons = weaponsReferencingProjectile(entity.id);
     description = `根据已加载武器的 Projectile 字段，发现 ${weapons.length} 个引用；未加载或特殊逻辑可能未列出。`;
-    const children = ['AirburstWeapon', 'ShrapnelWeapon'].filter(key => val(entity.id, key) && !/^(?:none|<none>)$/i.test(val(entity.id, key)));
+    const children = ['AirburstWeapon', 'ShrapnelWeapon', 'ReturnWeapon', 'Interceptable.WeaponOverride'].filter(key => val(entity.id, key) && !/^(?:none|<none>)$/i.test(val(entity.id, key)));
     items = children.map(key => refMarkup('', val(entity.id, key), 'weapon', { entity, key })).join('');
     if (weapons.length) items += `<div class="section-head" data-ref-users><div><h3>使用此投射物的武器</h3><p>修改投射物可能同时影响这些武器。</p></div></div>` + weapons.map(weapon => refMarkup('武器 · Projectile', weapon.id, 'weapon')).join('');
     if (!items) items = '<p class="ref-note">当前没有发现关联武器。</p>';
   } else if (entity.type === 'warhead') {
     const weapons = weaponsReferencingWarhead(entity.id);
-    const supers = superweaponsReferencing(entity.id, ['SW.Warhead']);
+    const supers = superweaponsReferencing(entity.id, ['SW.Warhead', 'Detonate.Warhead']);
+    const critParents = state.entities.filter(item => item.type === 'warhead' && lower(val(item.id, 'Crit.Warhead').trim()) === lower(entity.id));
     description = `根据已加载的规则，发现 ${weapons.length} 个武器和 ${supers.length} 个超级武器引用此弹头；包括直接命中弹头和炸弹弹头。`;
-    items = (weapons.length || supers.length ? '<div class="section-head" data-ref-users><div><h3>引用此弹头的对象</h3></div></div>' : '') + (weapons.map(({ weapon, refs }) => {
+    const crit = val(entity.id, 'Crit.Warhead');
+    if (crit && !/^(?:none|<none>)$/i.test(crit)) items += refMarkup('', crit, 'warhead', { entity, key: 'Crit.Warhead' });
+    items += (weapons.length || supers.length || critParents.length ? '<div class="section-head" data-ref-users><div><h3>引用此弹头的对象</h3></div></div>' : '') + (weapons.map(({ weapon, refs }) => {
       const roles = refs.map(ref => `${fieldInfoFor(weapon, ref.key).label}${ref.source === 'global' ? '（全局默认）' : ''}`).join('、');
       return refMarkup(`武器 · ${roles}`, weapon.id, 'weapon');
-    }).join('') + supers.map(({ superweapon }) => refMarkup('超级武器 · SW.Warhead', superweapon.id, 'superweapon')).join('') || '<p class="ref-note">当前没有发现关联对象。</p>');
+    }).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('') + critParents.map(parent => refMarkup('弹头 · Crit.Warhead', parent.id, 'warhead')).join('') || '<p class="ref-note">当前没有发现关联对象。</p>');
+  } else if (['shield', 'attachtype', 'radiation', 'lasertrail'].includes(entity.type)) {
+    const users = phobosUsers(entity);
+    description = `发现 ${users.length} 处已加载的引用；修改此定义会影响这些对象。`;
+    items = users.length ? '<div class="section-head" data-ref-users><div><h3>引用此对象的规则</h3></div></div>' + users.map(user => refMarkup(`${labelFor(user.entity.type)} · ${user.key}`, user.entity.id, user.entity.type)).join('') : '<p class="ref-note">当前没有发现引用。</p>';
   } else if (entity.type === 'superweapon') {
     const providers = state.entities.filter(item => unitTypes.has(item.type) && grantedSuperweapons(item).some(ref => lower(ref.id) === lower(entity.id)));
     description = `根据已加载对象的 SuperWeapon、SuperWeapon2 和 SuperWeapons 字段，发现 ${providers.length} 个提供对象；其他规则也可能影响可用性。`;
-    const linked = [['SW.Warhead', '效果弹头', 'warhead'], ['WeaponType', '发射武器', 'weapon'], ['Nuke.Payload', '载荷武器', 'weapon']];
+    const linked = [['SW.Warhead', '效果弹头', 'warhead'], ['WeaponType', '发射武器', 'weapon'], ['Nuke.Payload', '载荷武器', 'weapon'], ['Detonate.Warhead', '引爆弹头', 'warhead'], ['Detonate.Weapon', '引爆武器', 'weapon']];
     items = linked.filter(([key]) => val(entity.id, key) && !/^(?:none|<none>)$/i.test(val(entity.id, key))).map(([key, label, type]) => refMarkup(label, val(entity.id, key), type, { entity, key })).join('');
+    for (const [index, id] of val(entity.id, 'SW.Next').split(',').map(value => value.trim()).filter(Boolean).entries()) items += refMarkup('', id, 'superweapon', { entity, key: 'SW.Next', note: `第 ${index + 1} 个后续超级武器` });
     if (providers.length) items += providers.map(provider => refMarkup(`提供对象 · ${provider.name}`, provider.id, provider.type)).join('');
     if (!items) items = '<p class="ref-note">当前没有发现直接关联的对象。</p>';
   } else {
@@ -791,6 +874,9 @@ function renderRelations(entity) {
     const weapons = ['Primary','Secondary','ElitePrimary','EliteSecondary'];
     if (entity.type === 'infantry') weapons.push(...['OccupyWeapon','EliteOccupyWeapon'].filter(key => val(entity.id, key)));
     items = weapons.map(key => refMarkup('', val(entity.id,key), 'weapon', { entity, key })).join('');
+    const shield = val(entity.id, 'ShieldType').trim();
+    if (shield && !/^(?:none|<none>)$/i.test(shield)) items += refMarkup('', shield, 'shield', { entity, key: 'ShieldType' });
+    for (const id of val(entity.id, 'AttachEffect.AttachTypes').split(',').map(item => item.trim()).filter(Boolean)) items += refMarkup('', id, 'attachtype', { entity, key: 'AttachEffect.AttachTypes' });
     const primary = val(entity.id, 'Primary');
     const users = primary ? referencesTo(primary) : [];
     if (users.length > 1) items += `<div class="source-bar">${icon('info',16)}<div><strong>主武器被 ${users.length} 个已识别对象使用。</strong><br>修改武器定义可能同时影响它们。</div></div>`;
@@ -815,7 +901,9 @@ function showToast(message) {
   showToast.timer = setTimeout(() => toast.classList.remove('visible'), 4500);
 }
 function selectEntity(id, type, via = '关联', preferredCategory = '') {
-  let entity = entityFor(id, type) || entityFor(id);
+  let entity = entityFor(id, type);
+  if (!entity && type === 'sections' && state.project.section(id)) entity = { id, type, name: id, exists: true };
+  if (!entity) entity = entityFor(id);
   if (!entity) { state.entities = buildEntities(); entity = entityFor(id, type) || entityFor(id); }
   if (!entity) { showToast(`未找到关联对象 ${id}。`); return; }
   const before = captureNavigation();
@@ -829,7 +917,7 @@ function selectEntity(id, type, via = '关联', preferredCategory = '') {
     navigation.trail = navigation.trail.slice(-64);
     navigation.trail[0] = { ...navigation.trail[0], truncated: true };
   }
-  state.category = preferredCategory || (['weapon','projectile','warhead','superweapon','global','sections'].includes(entity.type) ? entity.type : 'all');
+  state.category = preferredCategory || (['weapon','projectile','warhead','superweapon','shield','attachtype','radiation','lasertrail','global','sections'].includes(entity.type) ? entity.type : 'all');
   state.search = '';
   state.owner = '';
   state.listLimit = 250;
@@ -957,6 +1045,13 @@ function commitField(section, key, value) {
   return true;
 }
 
+app.addEventListener('toggle', event => {
+  const panel = event.target;
+  if (panel.dataset.phobosPanel === undefined) return;
+  if (panel.open) expandedPhobosPanels.add(panel.dataset.phobosPanel);
+  else expandedPhobosPanels.delete(panel.dataset.phobosPanel);
+}, true);
+
 app.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button || !app.contains(button)) return;
@@ -965,7 +1060,7 @@ app.addEventListener('click', event => {
     state.category = button.dataset.category;
     state.search = '';
     state.listLimit = 250;
-    if (state.category === 'superweapon' || state.category === 'projectile') {
+    if (['superweapon', 'projectile', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(state.category)) {
       const first = state.entities.find(item => item.type === state.category && item.exists) || state.entities.find(item => item.type === state.category);
       state.selected = first?.id || ''; state.selectedType = first ? first.type : ''; state.tab = 'basic';
       state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
@@ -1019,6 +1114,8 @@ app.addEventListener('click', event => {
     openChoices(button.dataset.kind, button.dataset.key);
   } else if (button.dataset.action === 'edit-list') {
     openListEditor(button.dataset.key);
+  } else if (button.dataset.action === 'extra-warheads') {
+    openExtraWarheads();
   } else if (button.dataset.action === 'add-field') {
     openAddField();
   } else if (button.dataset.action === 'remove-pending-field') {
@@ -1096,12 +1193,13 @@ async function loadFiles(list, { nativeSession = null, skipConfirm = false } = {
   showToast('正在读取规则和本地资源，请稍候。');
   try {
     const folderPaths = incoming.every(file => file.webkitRelativePath?.includes('/'));
-    const [parsed, resources] = await Promise.all([
+    const [parsed, resources, phobos] = await Promise.all([
       Promise.all(incoming.map(async file => {
         const path = folderPaths ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name;
         return parseFile(file.name, new Uint8Array(await file.arrayBuffer()), path);
       })),
       GameResources.load(selected),
+      detectPhobos(selected),
     ]);
     if (sequence !== importSequence) return false;
     const nearest = [...parsed].sort((a, b) => a.path.split('/').length - b.path.split('/').length);
@@ -1121,6 +1219,19 @@ async function loadFiles(list, { nativeSession = null, skipConfirm = false } = {
     if (isFolder && !rules) resources.notes.push('根目录和所选 MIX 中均未找到 rulesmo.ini；当前显示其他选入的规则文件。');
     const main = rules || nearest.find(file => /^rulesmd\.ini$/i.test(file.name)) || parsed[0];
     if (!main) throw new Error('没有找到可读取的 rulesmo.ini。');
+    // Make a packed art file selectable without changing the active rules project.
+    // Saving it follows the same standalone override and backup flow as rulesmo.ini.
+    if (!parsed.some(file => /^art(?:mo|md)\.ini$/i.test(file.path))) {
+      for (const name of ['artmo.ini', 'artmd.ini']) {
+        const packed = await resources.findFile(name).catch(() => null);
+        if (!packed) continue;
+        try {
+          const file = parseFile(name, packed.bytes, name);
+          file.sourceArchive = packed.archive; parsed.push(file);
+        } catch (error) { resources.notes.push(`无法加载美术规则 ${name}：${error.message}`); }
+        break;
+      }
+    }
     let project = new IniProject(parsed, main.path);
     const attempted = new Set();
     while (project.missingIncludes.length && attempted.size < 1024) {
@@ -1144,8 +1255,11 @@ async function loadFiles(list, { nativeSession = null, skipConfirm = false } = {
     }
     if (sequence !== importSequence) return false;
     state.project = project;
+    state.visitedMainPaths = new Set([project.mainPath]);
+    expandedPhobosPanels.clear();
     state.pendingFields.clear();
     state.resources = resources;
+    state.phobos = phobos;
     state.desktopSession = nativeSession;
     state.demo = false; state.category = 'all'; state.search = ''; state.owner = ''; state.tab = 'basic'; state.listLimit = 250;
     state.globalSearch = ''; state.armorSearch = ''; state.armorOpen = false;
@@ -1184,8 +1298,13 @@ async function saveDesktopProject() {
   }
   const project = state.project;
   const changed = [...new Set(markChanges().map(change => change.file))];
+  const incomplete = dirtyProjectWarnings(project, state.visitedMainPaths, changed);
+  if (incomplete.length) {
+    showToast(`规则加载不完整，暂不能保存 [${incomplete[0].path}] 的修改：${incomplete[0].warnings[0]}`);
+    return;
+  }
   const main = project.resolve(project.mainPath);
-  if (main?.sourceArchive && !changed.includes(main)) changed.push(main);
+  if (main?.sourceArchive && !changed.includes(main) && changed.some(file => project.loadOrder.includes(file))) changed.push(main);
   const files = changed.map(file => ({ file, bytes: serialize(file) }));
   app.inert = true;
   showToast('正在校验文件并保存，原文件会自动备份。');
@@ -1383,7 +1502,7 @@ function showEditorError(message) {
 editorDialog.addEventListener('input', () => editorDialog.querySelector('[data-editor-error]')?.remove());
 
 function quickChoiceKind(type) {
-  return ({ countryList: 'country', prerequisiteList: 'prerequisite', abilities: 'abilities', weapon: 'weapon', superweapon: 'superweapon', superweapons: 'superweapons' })[type] || '';
+  return ({ countryList: 'country', prerequisiteList: 'prerequisite', abilities: 'abilities', weapon: 'weapon', warhead: 'warhead', shield: 'shield', radiation: 'radiation', lasertrail: 'lasertrail', armor: 'armor', attachtypes: 'attachtypes', superweapon: 'superweapon', superweapons: 'superweapons', phobosTargets: 'phobosTargets', phobosHouses: 'phobosHouses' })[type] || '';
 }
 function quickChoiceOptions(kind, value, passengerTypes = ['infantry', 'vehicle']) {
   if (kind !== 'passenger') return choicesFor(kind, value);
@@ -1407,7 +1526,8 @@ function quickFieldControl(field) {
   const value = String(field.value ?? ''), kind = quickChoiceKind(field.type);
   const attr = `data-quick-field="${h(field.key)}" aria-label="${h(field.key)}"${field.unavailable ? ' disabled' : ''}`;
   if (kind) return `<input type="hidden" ${attr} value="${h(value)}"><button type="button" class="choice-trigger quick-choice" data-quick-choose="${h(field.key)}" data-quick-kind="${h(kind)}" aria-label="选择 ${h(field.key)}"><span>${h(quickChoiceText(kind, value))}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button><div class="quick-reference-info" data-quick-info="${h(field.key)}"></div>`;
-  if (field.type === 'multiplier') return `<input ${attr} type="text" inputmode="decimal" value="${h(value)}" autocomplete="off" placeholder="例如 1、0.5 或 50%">`;
+  if (['text', 'burstDelays', 'flh'].includes(field.type)) return `<input ${attr} type="text" value="${h(value)}" autocomplete="off" placeholder="留空不设置">`;
+  if (['multiplier', 'probability', 'decimal', 'nonnegativeDecimal'].includes(field.type)) return `<input ${attr} type="text" inputmode="decimal" value="${h(value)}" autocomplete="off" placeholder="例如 1、0.5 或 50%">`;
   if (field.type === 'integer' || field.type === 'signed' || field.type === 'positiveInteger') return `<input ${attr} type="text" inputmode="${field.type === 'signed' ? 'text' : 'numeric'}" value="${h(value)}" autocomplete="off" placeholder="${field.unavailable ? '未加载全局配置' : field.required ? '请输入整数' : '留空不设置'}">`;
   let options;
   if (field.type === 'boolean') {
@@ -1416,7 +1536,7 @@ function quickFieldControl(field) {
     options = [{ id: truthy ? value : trueStyle ? 'true' : 'yes', label: '是' }, { id: falsy ? value : trueStyle ? 'false' : 'no', label: '否' }];
     if (value && !truthy && !falsy) options.unshift({ id: value, label: `当前值：${value}` });
   } else {
-    options = enumChoices('pipScale', value).map(option => ({ id: lower(option.id) === lower(value) ? value : option.id, label: `${option.label} / ${option.id}` }));
+    options = enumChoices(enumDefinition(field.type) ? field.type : 'pipScale', value).map(option => ({ id: lower(option.id) === lower(value) ? value : option.id, label: `${option.label} / ${option.id}` }));
   }
   if (!value || field.allowClear) options.unshift({ id: '', label: value ? '使用默认值（移除已加载的定义）' : field.required ? '请选择' : '未设置（使用默认值）' });
   return `<select ${attr}>${options.map(option => `<option value="${h(option.id)}" ${option.id === value ? 'selected' : ''}>${h(option.label)}</option>`).join('')}</select>`;
@@ -1453,7 +1573,7 @@ function openWeaponIsolation() {
       const enabled = id && project.section(id), checked = enabled && lower(id) === lower(current.id) && ((key === 'projectile' && current.type === 'projectile') || (key !== 'projectile' && current.type === 'warhead'));
       return `<label class="analysis-check"><input type="checkbox" data-isolate-copy="${key}" ${enabled ? '' : 'disabled'} ${checked ? 'checked' : ''}><span>${h(label)}：<strong>${h(id || '未配置')}</strong>${note ? ` <small>${h(note)}</small>` : ''}${id && !enabled ? ' <small>未找到定义</small>' : ''}</span></label>`;
     };
-    options.innerHTML = `<div class="analysis-card"><strong>将复制武器 [${h(weapon.id)}]</strong><p>同时复制以下对象（可选）：</p>${checkbox('projectile', '投射物', projectile)}${checkbox('warhead', '命中弹头', direct?.id)}${checkbox('bomb', '炸弹弹头', bomb?.id, bomb?.source === 'global' ? '当前为全局默认' : '')}<p>复制投射物时，其子武器等其他引用仍保持共享；复制弹头也不会复制其动画等资源。</p></div>`;
+    options.innerHTML = `<div class="analysis-card"><strong>将复制武器 [${h(weapon.id)}]</strong><p>同时复制以下对象（可选）：</p>${checkbox('projectile', '投射物', projectile)}${checkbox('warhead', '命中弹头', direct?.id)}${checkbox('bomb', '炸弹弹头', bomb?.id, bomb?.source === 'global' ? '当前为全局默认' : '')}<p>复制投射物时，其子武器等其他引用仍保持共享；复制弹头也不会复制其动画等资源。Phobos 额外弹头仍与原武器共享。</p></div>`;
   }
   function drawSlots() {
     const slots = unitWeaponSlots(project, unit.value).filter(matches);
@@ -1525,11 +1645,11 @@ function openWeaponAnalysis() {
     if (!selectedTarget) { results.innerHTML = '<p>没有匹配的目标，请调整搜索内容。</p>'; return; }
     const report = analyzeWeaponEffect(project, weapon.value, selectedTarget);
     const display = number => Number.isFinite(number) ? String(Number(number.toPrecision(8))) : '无法计算';
-    const stages = report.stages.map(stage => `<div class="analysis-card"><strong>${h(stage.label)}${stage.enabled === false ? '（未确认启用）' : ''}</strong><p>弹头：<code>${h(stage.warhead || '未配置')}</code>${stage.warheadSource ? ` · ${h(stage.warheadSource)}` : ''}<br>配置伤害：<code>${h(stage.damage || '未配置')}</code> · ${h(stage.source)}${stage.delay ? `<br>炸弹延迟：${h(stage.delay)}` : ''}</p><p>装甲修正：<strong>${stage.modifier.value === null ? h(stage.modifier.reason) : `${h(display(stage.modifier.value * 100))}%`}</strong>${stage.product === null ? '' : `；数值乘积：<strong>${h(display(stage.product))}</strong>`}</p>${stage.modifier.path.length ? `<p class="analysis-path">${stage.modifier.path.map(h).join('<br>→ ')}</p>` : ''}${stage.enabled === false ? '<p>直接命中弹头未确认启用 IvanBomb；炸弹字段仅作配置展示。</p>' : ''}</div>`).join('');
+    const stages = report.stages.map(stage => `<div class="analysis-card"><strong>${h(stage.label)}${stage.enabled === false ? '（未确认启用）' : ''}</strong><p>弹头：<code>${h(stage.warhead || '未配置')}</code>${stage.warheadSource ? ` · ${h(stage.warheadSource)}` : ''}<br>配置伤害：<code>${h(stage.damage || '未配置')}</code> · ${h(stage.source)}${stage.delay ? `<br>炸弹延迟：${h(stage.delay)}` : ''}${stage.chance ? `<br>触发概率：${h(stage.chance)}` : ''}</p><p>装甲修正：<strong>${stage.modifier.value === null ? h(stage.modifier.reason) : `${h(display(stage.modifier.value * 100))}%`}</strong>${stage.product === null ? '' : `；数值乘积：<strong>${h(display(stage.product))}</strong>`}</p>${stage.modifier.path.length ? `<p class="analysis-path">${stage.modifier.path.map(h).join('<br>→ ')}</p>` : ''}${stage.enabled === false ? '<p>直接命中弹头未确认启用 IvanBomb；炸弹字段仅作配置展示。</p>' : ''}</div>`).join('');
     const projectile = report.projectile ? `<p>投射物：<code>${h(report.projectile)}</code>${report.projectileFields.length ? ` · ${report.projectileFields.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}` : ' · 未配置已识别的目标类型字段'}</p>` : '<p>未配置投射物。</p>';
     const targeting = report.targeting.length ? `<p>已配置目标选择：${report.targeting.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}。</p>` : '';
     const special = report.specialFields.length ? `<p>武器特殊字段：${report.specialFields.map(field => `${h(field.key)}=${h(field.value)}`).join('、')}。</p>` : '';
-    results.innerHTML = `${report.incomplete.length ? `<div class="quick-warnings">规则加载不完整：${h(report.incomplete[0])}。</div>` : ''}<div class="analysis-card"><strong>目标装甲：${h(report.armor || '未配置')}</strong>${projectile}${targeting}${special}</div>${stages}<p>特殊伤害、免疫、射程、弹片、扩散、经验、模式和其他规则都可能改变实际效果。0%、1%、2% 的装甲修正还可能影响选敌；单独设置的目标选择字段也可能改变这些行为。</p>`;
+    results.innerHTML = `${report.incomplete.length ? `<div class="quick-warnings">规则加载不完整：${h(report.incomplete[0])}。</div>` : ''}${report.limitations.length ? `<div class="quick-warnings">${report.limitations.map(h).join('<br>')}</div>` : ''}<div class="analysis-card"><strong>目标装甲：${h(report.armor || '未配置')}</strong>${projectile}${targeting}${special}</div>${stages}<p>特殊伤害、免疫、射程、弹片、扩散、经验、模式和其他规则都可能改变实际效果。0%、1%、2% 的装甲修正还可能影响选敌；单独设置的目标选择字段也可能改变这些行为。</p>`;
   }
   let searchComposing = false;
   function drawTargets() {
@@ -1563,7 +1683,7 @@ function openQuickFeature() {
   const project = state.project, section = state.selected;
   const selected = entityFor(section, state.selectedType) || entityFor(section);
   if (!selected || !project.section(section)) return;
-  const entity = actualEntity(selected), features = quickFeaturesFor(entity.type);
+  const entity = actualEntity(selected), features = quickFeaturesFor(entity.type).filter(feature => feature.id !== 'phobos-art-trail' || /^art(?:mo|md)\.ini$/i.test(project.mainPath));
   if (!features.length) return;
   let plan = null, activeFeature = '', pickerState = null;
   const drafts = new Map();
@@ -1680,7 +1800,7 @@ function openQuickFeature() {
     if (button.dataset.quickChoose !== undefined) {
       const key = button.dataset.quickChoose, kind = button.dataset.quickKind;
       const input = [...details.querySelectorAll('[data-quick-field]')].find(item => item.dataset.quickField === key);
-      const multiple = ['country', 'prerequisite', 'abilities', 'superweapons'].includes(kind);
+      const multiple = ['country', 'prerequisite', 'abilities', 'superweapons', 'attachtypes'].includes(kind) || !!enumDefinition(kind)?.multiple;
       openPicker(kind, input.value, multiple, `选择 ${fieldInfoFor(entity, key).label} / ${key}`, value => {
         input.value = value; button.querySelector('span').textContent = quickChoiceText(kind, value); updateReferenceInfo(details);
       });
@@ -1730,6 +1850,10 @@ function openQuickFeature() {
       } else {
         const values = feature().id === 'payload' ? readPayload(details.querySelector('[data-quick-payload]')) : Object.fromEntries([...details.querySelectorAll('[data-quick-field]')].map(input => [input.dataset.quickField, input.value]));
         plan = prepareQuickFeature(project, { featureId: feature().id, type: entity.type, section, values });
+      }
+      if (feature().id.startsWith('phobos-')) {
+        if (!state.phobos || state.phobos.status !== 'detected') plan.warnings.unshift('未能从当前导入内容确认 Phobos 版本；请确认游戏实际加载了兼容的扩展。');
+        else if (!/^0\.4(?:\.|$)/.test(state.phobos.version)) plan.warnings.unshift(`字段依据 Phobos 0.4；检测到 DLL ${state.phobos.version}，请核对当前版本的字段兼容性。`);
       }
       const changes = plan.changes.length ? plan.changes.map(change => {
         const where = change.section || section;
@@ -1900,6 +2024,7 @@ function openMainFilePicker() {
     editorDialog.close();
     if (file.path === current) return;
     state.project.mainPath = file.path;
+    state.visitedMainPaths.add(file.path);
     state.pendingFields.clear();
     state.listLimit = 250;
     state.project.rebuild();
@@ -1929,13 +2054,13 @@ function openChoices(kind, key) {
   const section = state.selected;
   const raw = state.project.get(section, key)?.value || '';
   const definition = enumDefinition(kind);
-  const single = ['armor', 'side', 'superweapon', 'weapon', 'warhead', 'projectile'].includes(kind) || (definition && !definition.multiple);
+  const single = ['armor', 'side', 'superweapon', 'weapon', 'warhead', 'projectile', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(kind) || (definition && !definition.multiple);
   const values = single ? (raw ? [raw] : []) : raw.split(',').map(value => value.trim()).filter(Boolean);
   const selected = new Map(values.map(value => [lower(value), value]));
   const options = choicesFor(kind, raw);
-  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', superweapon: '选择超级武器', superweapons: '选择超级武器' };
+  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', shield: '选择护盾', attachtype: '选择附加效果', radiation: '选择辐射类型', lasertrail: '选择激光尾迹', superweapon: '选择超级武器', superweapons: '选择超级武器' };
   const title = definition?.title || labels[kind] || '选择规则项';
-  const description = definition ? (definition.description || '可搜索中文或规则代码；当前未识别的值会保留。') : kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile'].includes(kind) ? `可搜索已加载的${labelFor(kind)}；未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
+  const description = definition ? (definition.description || '可搜索中文或规则代码；当前未识别的值会保留。') : kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile', 'shield', 'attachtype', 'attachtypes', 'radiation', 'lasertrail'].includes(kind) ? `可搜索已加载的${labelFor(kind === 'attachtypes' ? 'attachtype' : kind)}；未登记或未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
   editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">${h(title)}</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>${h(description)}</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="choice-search" type="search" placeholder="搜索中文、英文或代码..." aria-label="搜索选项"></div><div class="option-toolbar"><span data-selected-count></span>${single ? '<button type="button" class="text-action" data-clear-selection>清空选择</button>' : ''}</div><div class="option-list" data-option-list></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>应用选择</button></div>`;
   const search = editorDialog.querySelector('#choice-search');
   const list = editorDialog.querySelector('[data-option-list]');
@@ -1986,6 +2111,54 @@ function openChoices(kind, key) {
   drawOptions();
   editorDialog.showModal();
   search.focus({ preventScroll: true });
+}
+
+function openExtraWarheads() {
+  const project = state.project, weapon = state.selected;
+  let rows = extraWarheadRows(project, weapon).map(row => ({ ...row })), plan = null;
+  const registered = new Set(listTypes(project, 'Warheads').map(lower));
+  const options = state.entities.filter(item => item.type === 'warhead' && item.exists && registered.has(lower(item.id)))
+    .map(item => `<option value="${h(item.id)}">${h(item.name)}</option>`).join('');
+  editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">配置 Phobos 额外弹头</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><div data-extra-form><p>按顺序设置弹头和对应参数；空参数使用游戏默认值。已有的简写会按实际生效值显示，未修改时保持原样。</p><datalist id="extra-warhead-options">${options}</datalist><div class="extra-rows" data-extra-rows></div><button type="button" class="btn sm" data-extra-add>＋ 添加弹头</button><p class="create-note">伤害、概率或完整引爆可以整列留空；如需单独设置，须为每一行填写，避免位置错配。概率可输入 0.5 或 50%；完整引爆可选择默认、是或否。</p></div><div data-extra-preview hidden></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn" data-extra-back hidden>返回修改</button><button type="button" class="btn primary" data-extra-next>预览修改</button><button type="button" class="btn primary" data-extra-apply hidden>确认修改</button></div>`;
+  const list = editorDialog.querySelector('[data-extra-rows]'), form = editorDialog.querySelector('[data-extra-form]');
+  const preview = editorDialog.querySelector('[data-extra-preview]'), next = editorDialog.querySelector('[data-extra-next]');
+  const back = editorDialog.querySelector('[data-extra-back]'), apply = editorDialog.querySelector('[data-extra-apply]');
+  function fullOptions(value) {
+    const options = [['', '默认（完整引爆）'], ['yes', '是'], ['no', '否']];
+    if (value && !options.some(option => option[0] === value)) options.push([value, `当前值：${value}`]);
+    return options.map(([id, label]) => `<option value="${h(id)}" ${id === value ? 'selected' : ''}>${h(label)}</option>`).join('');
+  }
+  function draw() {
+    list.innerHTML = rows.map((row, i) => `<div class="extra-row"><strong>第 ${i + 1} 个弹头</strong><div class="extra-inputs"><label>弹头<input data-extra-index="${i}" data-extra-key="id" list="extra-warhead-options" value="${h(row.id)}" autocomplete="off" placeholder="选择已登记弹头"></label><label>伤害<input data-extra-index="${i}" data-extra-key="damage" value="${h(row.damage)}" placeholder="沿用武器伤害"></label><label>概率<input data-extra-index="${i}" data-extra-key="chance" value="${h(row.chance)}" placeholder="100%"></label><label>完整引爆<select data-extra-index="${i}" data-extra-key="full">${fullOptions(row.full)}</select></label></div><div class="extra-row-actions"><button type="button" data-extra-move="up" data-index="${i}" ${i === 0 ? 'disabled' : ''} aria-label="上移第 ${i + 1} 个弹头">↑</button><button type="button" data-extra-move="down" data-index="${i}" ${i === rows.length - 1 ? 'disabled' : ''} aria-label="下移第 ${i + 1} 个弹头">↓</button><button type="button" data-extra-remove="${i}" aria-label="删除第 ${i + 1} 个弹头">×</button></div></div>`).join('') || '<p class="create-note">尚未配置额外弹头。</p>';
+  }
+  const updateRow = event => { const input = event.target; if (input.dataset.extraIndex !== undefined) rows[Number(input.dataset.extraIndex)][input.dataset.extraKey] = input.value; };
+  list.addEventListener('input', updateRow);
+  list.addEventListener('change', updateRow);
+  list.addEventListener('click', event => {
+    const button = event.target.closest('button'); if (!button) return;
+    if (button.dataset.extraRemove !== undefined) rows.splice(Number(button.dataset.extraRemove), 1);
+    else if (button.dataset.extraMove) { const i = Number(button.dataset.index), j = i + (button.dataset.extraMove === 'up' ? -1 : 1); if (j >= 0 && j < rows.length) [rows[i], rows[j]] = [rows[j], rows[i]]; }
+    draw();
+  });
+  editorDialog.querySelector('[data-extra-add]').addEventListener('click', () => { const last = rows.at(-1); rows.push({ id: '', damage: last?.damage || '', chance: last?.chance || '', full: last?.full || '' }); draw(); list.querySelector(`[data-extra-index="${rows.length - 1}"]`)?.focus(); });
+  editorDialog.querySelectorAll('[data-editor-close]').forEach(button => button.addEventListener('click', () => editorDialog.close()));
+  back.addEventListener('click', () => { plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false; });
+  next.addEventListener('click', () => {
+    try {
+      if (state.project !== project || state.selected !== weapon) throw new Error('当前项目或武器已改变，请重新打开。');
+      plan = prepareExtraWarheads(project, weapon, rows);
+      const changes = plan.changes.map(change => `<div class="quick-change"><div>${fieldNameMarkup(fieldInfoFor({ id: weapon, type: 'weapon' }, change.key), change.key)}<small>${h(sourceName(change.file))}</small></div><div class="quick-change-values"><span>${h(change.before ?? '未配置')}</span><span>→</span><strong>${h(change.after || '空值')}</strong></div></div>`).join('') || '<p>没有产生修改。</p>';
+      const warnings = plan.warnings.length ? `<div class="quick-warnings"><strong>请留意</strong><ul>${plan.warnings.map(item => `<li>${h(item)}</li>`).join('')}</ul></div>` : '';
+      preview.innerHTML = `<p>确认后加入未保存的修改，点击主界面的保存后才写入文件。</p><div class="quick-changes">${changes}</div>${warnings}`;
+      form.hidden = true; preview.hidden = false; back.hidden = false; apply.hidden = false; next.hidden = true;
+    } catch (error) { showEditorError(error.message); }
+  });
+  apply.addEventListener('click', () => {
+    if (!plan || state.project !== project || state.selected !== weapon) { showEditorError('当前项目或武器已改变，请重新预览。'); return; }
+    if (plan.changes.length) { state.project = plan.project; state.changedSections = new Set(markChanges().map(change => lower(change.section))); }
+    editorDialog.close(); render(); showToast(plan.changes.length ? '已更新额外弹头；点击保存后写入规则文件。' : '当前设置没有产生修改。');
+  });
+  draw(); editorDialog.showModal();
 }
 
 function openListEditor(key) {
@@ -2108,6 +2281,7 @@ function showChanges() {
 
 const demoFiles = [parseFile('demo-rules.ini', enc.encode(DEMO_MAIN)), parseFile('demo-units.ini', enc.encode(DEMO_UNITS))];
 state.project = new IniProject(demoFiles, 'demo-rules.ini');
+state.visitedMainPaths = new Set([state.project.mainPath]);
 chooseInitial();
 resetNavigation();
 render();

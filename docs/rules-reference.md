@@ -10,7 +10,7 @@
 
 武器的 `Warhead` 是直接命中弹头，`IvanBomb.Warhead` 是附着炸弹爆炸弹头。命中弹头需要启用 `IvanBomb=yes`，炸弹效果才会生效；未单独设置或留空时，编辑器根据已加载的 `[CombatDamage]IvanWarhead` 显示全局默认值及来源，不会自动写入覆盖值。详见 [Ares 炸弹规则](https://ares-developers.github.io/Ares-docs/new/weapons/ivanbombs.html)。
 
-武器效果对照分别展示命中和炸弹的弹头。基础装甲读取 `Verses`；扩展装甲优先读取当前装甲的 `Versus.<装甲>`，否则追踪 `[ArmorTypes]` 的默认关系。按 Ares 初始化顺序，父装甲的专属 `Versus` 不会自动应用到子装甲。显示的伤害与修正乘积只用于解释配置，不计算特殊武器、免疫、溅射、目标选择或实战伤害。参考 [Ares 装甲规则](https://ares-developers.github.io/Ares-docs/new/additionalarmortypesandverses.html)和[装甲加载代码](https://github.com/Ares-Developers/Ares/blob/master/src/Enum/ArmorTypes.cpp)。
+武器效果对照分别展示命中、炸弹和已配置的 Phobos 额外弹头。基础装甲读取 `Verses`；扩展装甲优先读取当前装甲的 `Versus.<装甲>`，否则追踪 `[ArmorTypes]` 的默认关系。按 Ares 初始化顺序，父装甲的专属 `Versus` 不会自动应用到子装甲。显示的伤害与修正乘积只用于解释配置，不完整模拟 Phobos 护盾、暴击和其他特殊武器，也不计算免疫、溅射、目标选择或实战伤害。参考 [Ares 装甲规则](https://ares-developers.github.io/Ares-docs/new/additionalarmortypesandverses.html)和[装甲加载代码](https://github.com/Ares-Developers/Ares/blob/master/src/Enum/ArmorTypes.cpp)。
 
 ## 快捷功能
 
@@ -42,7 +42,7 @@
 - 未改动的文件按原始字节输出；修改已有属性时保留所在行的其他内容、注释、顺序和原始换行。修改写入已加载文件中最后一个定义该属性的位置，新增属性写入最后一个同名区块。
 - 规则文件支持 UTF-8 和常见 GBK。为避免破坏原始编码，GBK 和无法判断编码的纯 ASCII 文件目前只允许写入 ASCII 字符；规则文件暂不支持 UTF-16。历史快照的差异查看另支持 UTF-16。
 - 按 Ares 的 `[#include]` 深度优先顺序解析导入文件；找不到独立文件时，在 MIX 中查找不带子目录的 include。不支持 Phobos INI 包含机制或 `$Inherits` 继承，出现这些规则或缺少引用时会提示。
-- 未加密 MIX 索引可用于读取主规则、美术配置和 PCX 图标；暂不支持加密索引、嵌套 MIX、SHP 图标或模型动画。资源仅在内存中按需读取，不解包到磁盘。
+- 未加密 MIX 索引可用于读取主规则、美术配置和 PCX 图标；暂不支持加密索引、嵌套 MIX、SHP 图标或模型动画。读取资源时仅在内存中处理；保存来自 MIX 的规则或美术 INI 时会生成独立文件，不修改 MIX。
 - 选择的文件中包含 `ra2md.csf` 时，名称优先使用 `UIName` 对应的本地字符串，否则回退到 INI 的 `Name` 或代码。找到 PCX 资源后，单位图标从美术配置读取，超级武器图标从 `SidebarPCX` 读取。
 - 国家、装甲及前置选项根据当前规则生成，未登记的原有代码会保留。基础装甲伤害修正按游戏的 11 类固定顺序编辑，不会自动补齐未设置项。
 - 桌面版「保存」直接修改选择的游戏目录并自动备份；「另存为」输出到另选目录。浏览器版只下载文件。程序不启动游戏，也不保证当前客户端加载生成的文件，仍需在游戏中验证。

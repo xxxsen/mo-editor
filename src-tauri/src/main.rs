@@ -96,7 +96,10 @@ fn scan_directory(root: &Path) -> Result<Vec<LocalFileInfo>> {
             let is_root = relative.components().count() == 1;
             if !(extension == "ini"
                 || extension == "pcx"
-                || (is_root && (extension == "mix" || extension == "csf")))
+                || (is_root
+                    && (extension == "mix"
+                        || extension == "csf"
+                        || name.eq_ignore_ascii_case("Phobos.dll"))))
             {
                 continue;
             }
@@ -248,7 +251,9 @@ fn read_game_file(
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if !matches!(ext.as_str(), "ini" | "mix" | "csf" | "pcx") {
+    if !matches!(ext.as_str(), "ini" | "mix" | "csf" | "pcx")
+        && !path.eq_ignore_ascii_case("Phobos.dll")
+    {
         return Err("不支持读取该文件类型".into());
     }
     let actual =
@@ -386,4 +391,30 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("无法启动规则编辑器");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_directory;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn detects_only_the_root_phobos_dll_as_a_game_resource() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("pHoBoS.DLL"), b"metadata").unwrap();
+        fs::write(dir.path().join("Ares.dll"), b"other").unwrap();
+        fs::write(dir.path().join("rulesmo.ini"), b"[General]").unwrap();
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        fs::write(dir.path().join("nested").join("Phobos.dll"), b"nested").unwrap();
+        let paths: Vec<_> = scan_directory(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        assert!(paths.iter().any(|path| path == "pHoBoS.DLL"));
+        assert!(paths.iter().any(|path| path == "rulesmo.ini"));
+        assert!(!paths.iter().any(|path| path == "Ares.dll"));
+        assert!(!paths.iter().any(|path| path == "nested/Phobos.dll"));
+    }
 }

@@ -1,0 +1,49 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Phobos desktop save check</title></head><body><pre id="result">RUNNING</pre><iframe id="subject" width="1200" height="800"></iframe>
+<script type="module">
+import { hashMixFilename } from '../src/resources.js';
+const result=document.querySelector('#result'),frame=document.querySelector('#subject');
+const enc=new TextEncoder(),dec=new TextDecoder(),bytes=text=>enc.encode(text);
+const check=(condition,message)=>{if(!condition)throw new Error(message)};
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const wait=async(fn,message)=>{for(let i=0;i<250;i++){if(fn())return;await delay(20)}throw new Error(message)};
+function mix(name,text){const data=bytes(text), out=new Uint8Array(22+data.length),v=new DataView(out.buffer);v.setUint16(4,1,true);v.setUint32(6,data.length,true);v.setUint32(10,hashMixFilename(name),true);v.setUint32(18,data.length,true);out.set(data,22);return out}
+const originalMix=mix('artmo.ini','[LaserTrailTypes]\n0=TRAIL\n[TRAIL]\nColor=255,0,0\n[TANKART]\nCameoPCX=ICON\n');
+const disk=new Map([['rulesmo.ini',bytes('[VehicleTypes]\n0=TANK\n[TANK]\nName=Tank\nCost=100\nImage=TANKART\n')],['expandmo99.mix',originalMix.slice()]]);
+const describe=()=>({sessionId:'game',directory:'D:\\Game',files:[...disk].map(([path,data])=>({path,name:path,size:data.length}))});
+const hash=async data=>data?[...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(x=>x.toString(16).padStart(2,'0')).join(''):null;
+let pending=null, writes=[];
+window.mockInvoke=async(command,payload,options)=>{
+ if(command==='open_recent_directory')return null;
+ if(command==='pick_game_directory')return describe();
+ if(command==='remember_directory')return;
+ if(command==='read_game_file')return disk.get(payload.path).slice(payload.start,payload.end).buffer;
+ if(command==='prepare_save'){for(const e of payload.entries)if(await hash(disk.get(e.path))!==e.expectedHash)throw Error('conflict');pending={entries:payload.entries,staged:[]};return 'tx'}
+ if(command==='stage_save_file'){pending.staged[Number(options.headers['x-file-index'])]=new Uint8Array(payload).slice();return}
+ if(command==='commit_save'){writes.push(pending.entries.map(x=>x.path));pending.entries.forEach((e,i)=>disk.set(e.path,pending.staged[i]));return}
+ if(command==='abort_save')return;
+ throw Error(`unexpected command ${command}`);
+};
+frame.addEventListener('load',async()=>{try{
+ const w=frame.contentWindow,d=frame.contentDocument;
+ await wait(()=>!d.querySelector('#app').inert&&d.querySelector('[data-action="folder"]'),'desktop not ready');
+ d.querySelector('[data-action="folder"]').click(); await wait(()=>d.querySelector('.detail-name h2')?.textContent==='Tank'&&!d.querySelector('#app').inert,'game not opened');
+ let cost=d.querySelector('[data-field="Cost"]');cost.value='150';cost.dispatchEvent(new w.Event('change',{bubbles:true}));await delay(50);
+ function selectMain(name){d.querySelector('[data-action="choose-main"]').click();const dialog=d.querySelector('#editor-dialog');const button=[...dialog.querySelectorAll('[data-main-file]')].find(x=>x.textContent.includes(name));check(button,`${name} missing`);button.click()}
+ selectMain('artmo.ini');d.querySelector('[data-action="save"]').click();
+ await wait(()=>writes.length===1&&!d.querySelector('#app').inert,'rule save failed');
+ check(!disk.has('artmo.ini'),'unmodified packed art was unnecessarily written');check(writes[0].join(',')==='rulesmo.ini','wrong first save scope');
+ d.querySelector('[data-category="lasertrail"]').click();d.querySelector('[data-entity="TRAIL"]').click();
+ const color=d.querySelector('[data-field="Color"]');color.value='0,255,0';color.dispatchEvent(new w.Event('change',{bubbles:true}));await delay(50);
+ d.querySelector('[data-action="save"]').click();await wait(()=>writes.length===2&&!d.querySelector('#app').inert,'art save failed');
+ check(writes[1].join(',')==='artmo.ini','art save affected unrelated files');check(dec.decode(disk.get('artmo.ini')).includes('Color=0,255,0'),'loose art override not written');
+ check((await hash(disk.get('expandmo99.mix')))===(await hash(originalMix)),'MIX changed');
+ disk.set('rulesmo.ini',bytes('[#include]\n0=missing.ini\n[VehicleTypes]\n0=TANK\n[TANK]\nName=Tank\nCost=300\n'));
+ d.querySelector('[data-action="folder"]').click();await wait(()=>d.querySelector('[data-field="Cost"]')?.value==='300'&&!d.querySelector('#app').inert,'incomplete rules did not open');
+ cost=d.querySelector('[data-field="Cost"]');cost.value='400';cost.dispatchEvent(new w.Event('change',{bubbles:true}));await delay(50);
+ selectMain('artmo.ini');d.querySelector('[data-action="save"]').click();await delay(50);
+ check(writes.length===2&&d.querySelector('#toast').textContent.includes('规则加载不完整'),'switching main bypassed incomplete include protection');
+ check(dec.decode(disk.get('rulesmo.ini')).includes('Cost=300'),'incomplete rules were written');
+ result.textContent='PASS: packed art selection, scoped rule save, standalone art override and cross-main include protection';
+}catch(e){result.textContent=`FAIL: ${e.message}; toast=${frame.contentDocument.querySelector('#toast')?.textContent}; writes=${JSON.stringify(writes)}\n${e.stack}`}});
+frame.src='desktop-fixture.html';
+</script></body></html>

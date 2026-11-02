@@ -20,7 +20,8 @@ test('feature availability separates buildings, units and passenger diagnostics'
   assert.ok(ids('infantry').includes('passenger-fire'));
   assert.ok(!ids('infantry').includes('payload'));
   assert.ok(!ids('vehicle').includes('superweapon'));
-  assert.deepEqual(ids('weapon'), []);
+  assert.ok(ids('weapon').includes('phobos-burst'));
+  assert.ok(!ids('weapon').includes('transport'));
 });
 
 test('armed buildings warn about garrison weapon conflicts without altering their weapons', () => {

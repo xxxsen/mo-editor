@@ -1,3 +1,5 @@
+import { PHOBOS_FIELDS } from './phobos-fields.js';
+
 // 字段对照表：[中文名, 作用说明, 可选搜索别名, 可选常显提示]。
 // 按规则类型和全局段分组，避免 Speed、Range、Armor 等同名字段被错误解释。
 // 依据原版 rulesmd.ini 的字段注释和 Ares 文档；未确认的字段保留原名。
@@ -1238,6 +1240,10 @@ export const FIELD_METADATA = {
   },
 };
 
+for (const [type, fields] of Object.entries(PHOBOS_FIELDS)) {
+  FIELD_METADATA[type] = { ...(FIELD_METADATA[type] || {}), ...fields };
+}
+
 const normalize = value => String(value ?? '').trim().toLowerCase();
 const index = entries => new Map(Object.entries(entries).map(([name, definition]) => [normalize(name), definition]));
 const tables = Object.fromEntries(Object.entries(FIELD_METADATA)
@@ -1254,8 +1260,16 @@ export function getFieldInfo(fieldName, { type = '', section = '', globalKind = 
   const sectionName = normalize(section);
   let definition;
   if (type === 'global' || type === 'sections') {
+    if (type === 'sections') {
+      const trail = fieldName.match(/^LaserTrail(\d+)\.(Type|FLH|IsOnTurret)$/i);
+      if (trail) {
+        const descriptions = { type: ['类型', '引用已在美术 INI 登记的激光尾迹类型。'], flh: ['位置偏移', '以 Forward,Lateral,Height 顺序指定尾迹位置。'], isonturret: ['附着炮塔', '是否将尾迹位置相对于炮塔计算。'] };
+        const [label, description] = descriptions[normalize(trail[2])];
+        definition = [`尾迹 ${Number(trail[1])} ${label}`, `Phobos：${description} 用于单位图像定义。`];
+      } else if (name === 'lasertrail.types') definition = ['投射物尾迹类型', 'Phobos：投射物图像使用的尾迹类型列表；VoxelAnim 的同名字段位于规则 INI。'];
+    }
     const sectionTable = difficultySections.has(sectionName) ? sections.difficulty : sections[sectionName];
-    definition = sectionTable?.get(name);
+    definition = definition || sectionTable?.get(name);
     if (!definition && globalKind === 'country') definition = tables.country.get(name) || tables.common.get(name);
     if (!definition && sectionName === 'general') definition = tables.common.get(name);
   } else if (technoTypes.has(type)) {
@@ -1273,7 +1287,7 @@ export function getFieldInfo(fieldName, { type = '', section = '', globalKind = 
         definition = [`阵营 ${Number(match[1])} 逃生驾驶员`, `载具或飞机属于阵营索引 ${Number(match[1])} 时，可生成的逃生驾驶员步兵类型 ID；阵营索引从 0 开始。`];
       }
     }
-  } else if (type === 'weapon' || type === 'projectile' || type === 'warhead' || type === 'superweapon') {
+  } else if (['weapon', 'projectile', 'warhead', 'superweapon', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(type)) {
     definition = tables[type].get(name) || (type === 'warhead' && !technoOnlyEffects.has(name) ? tables.attachEffect.get(name) : null) || tables.common.get(name);
     if (!definition && type === 'warhead') {
       const match = fieldName.match(/^Versus\.([^.]+)(?:\.(ForceFire|Retaliate|PassiveAcquire))?$/i);

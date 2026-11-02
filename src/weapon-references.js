@@ -23,5 +23,11 @@ export function weaponWarheadReferences(project, weaponId) {
     const fallback = referenceId(project.get('CombatDamage', 'IvanWarhead')?.value);
     if (fallback) references.push({ key: 'IvanBomb.Warhead', id: fallback, source: 'global' });
   }
+  // Phobos extra warheads are positional and may intentionally contain duplicates.
+  const extra = project.get(weaponId, 'ExtraWarheads')?.value || '';
+  extra.split(',').forEach((value, index) => {
+    const id = referenceId(value);
+    if (id) references.push({ key: 'ExtraWarheads', id, source: 'weapon', index });
+  });
   return references;
 }
