@@ -30,7 +30,7 @@ npm run desktop:build
 | `src/field-metadata.js`、`src/field-catalog.js`、`src/enum-options.js`、`src/rule-schema.js` | 字段中文说明、可添加字段、选项和规则目录 |
 | `src/quick-features.js` | 快捷功能的适用类型、字段、建议值和预览校验 |
 | `src/phobos-fields.js`、`src/phobos-warhead-fields.js`、`src/phobos-version.js`、`src/phobos-warheads.js` | Phobos 字段字典、DLL 版本读取及额外弹头的有序配置 |
-| `src/object-creation.js`、`src/object-impact.js`、`src/weapon-references.js`、`src/warhead-superweapons.js` | 对象创建、关联复制和规则对象引用 |
+| `src/object-creation.js`、`src/object-impact.js`、`src/weapon-references.js`、`src/warhead-superweapons.js`、`src/warhead-references.js` | 对象创建、关联复制和规则对象引用 |
 | `src/rule-analysis.js`、`src/history-diff.js` | 建造与武器对照、历史快照差异 |
 | `src/desktop.js`、`src-tauri/src/main.rs` | 前端桌面接口和 Tauri 命令 |
 | `src-tauri/src/store.rs` | 本地目录访问、保存、备份与恢复 |
@@ -61,7 +61,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 - `object-creation-check.html`、`projectile-check.html`、`weapon-warheads-check.html`：新增对象及武器、弹头、投射物关联。
 - `quick-features-check.html`、`quick-features-extended-check.html`、`tech-buildings-check.html`、`quick-default-reset-check.html`：快捷功能、科技建筑及恢复默认值。
 - `analysis-check.html`：建造条件、武器效果和关联复制。
-- `phobos-check.html`、`phobos-desktop-check.html`、`warhead-launchsw-check.html`：护盾选择、额外弹头、弹头触发超级武器、尾迹及跨主文件的桌面保存保护。
+- `phobos-check.html`、`phobos-desktop-check.html`、`warhead-launchsw-check.html`、`warhead-references-check.html`：护盾选择、额外弹头、弹头关联、尾迹及跨主文件的桌面保存保护。
 - `field-catalog-check.html`、`field-metadata-check.html`、`enum-choice-check.html`：字段目录、中文说明和选项编辑。
 - `resource-check.html`、`rules-source-check.html`、`main-file-picker-check.html`：资源、规则来源及主文件选择。
 - `structured-check.html`、`global-search-check.html`、`all-objects-search-check.html`、`garrison-weapons-check.html`：结构化设置、搜索和驻军武器。

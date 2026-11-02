@@ -12,6 +12,8 @@
 
 Phobos 的弹头 `LaunchSW` 可在弹头引爆位置触发列表中的超级武器；`LaunchSW.RealLaunch=no` 不要求发射方拥有这些超级武器，但负费用仍要求资金充足。超级武器类型及抑制器、指示器等设置还会影响触发，动画弹头还需要对应的发射者设置。编辑器提供触发列表选择、逐项关联和反向引用。详见 [Phobos 弹头触发超级武器规则](https://phobos.readthedocs.io/en/v0.4/New-or-Enhanced-Logics.html#launch-superweapons-on-impact)。
 
+弹头关联还包括暴击弹头、护盾类型、附加效果、护盾击破武器、复仇武器限制以及目标筛选和转换中引用的对象。多项引用按配置顺序显示；来源或目标单位没有登记，或同一 ID 在多个单位类型中登记时，不推断其类型。动画代码单独展示，动画定义通常位于美术规则，当前不会跨主文件跳转。列表依据已加载规则和显式引用，实际是否生效仍由相关开关和目标条件决定。
+
 武器效果对照分别展示命中、炸弹和已配置的 Phobos 额外弹头。基础装甲读取 `Verses`；扩展装甲优先读取当前装甲的 `Versus.<装甲>`，否则追踪 `[ArmorTypes]` 的默认关系。按 Ares 初始化顺序，父装甲的专属 `Versus` 不会自动应用到子装甲。显示的伤害与修正乘积只用于解释配置，不完整模拟 Phobos 护盾、暴击和其他特殊武器，也不计算免疫、溅射、目标选择或实战伤害。参考 [Ares 装甲规则](https://ares-developers.github.io/Ares-docs/new/additionalarmortypesandverses.html)和[装甲加载代码](https://github.com/Ares-Developers/Ares/blob/master/src/Enum/ArmorTypes.cpp)。
 
 ## 快捷功能

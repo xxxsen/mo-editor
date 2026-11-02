@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Warhead references</title></head><body>
+<pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1440" height="900"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const check = (value, message) => { if (!value) throw new Error(message); };
+const wait = async (fn, message) => { for (let i = 0; i < 250; i++) { if (fn()) return; await delay(20); } throw new Error(message); };
+const rules = `[VehicleTypes]\n0=OLD\n1=NEW\n2=AMBIG\n[InfantryTypes]\n0=FOOT\n1=AMBIG\n[WeaponTypes]\n0=HOST\n1=MISSINGUNIT\n2=ANIM1\n[Warheads]\n0=ROOT\n1=EXTRA\n[ShieldTypes]\n0=SHIELD\n[AttachEffectTypes]\n0=EFFECT\n1=ROOT\n[ArmorTypes]\ncustom=heavy\n[OLD]\nName=Old tank\n[NEW]\nName=New tank\n[FOOT]\nName=Infantry\n[AMBIG]\nName=Ambiguous\n[HOST]\nWarhead=ROOT\n[MISSINGUNIT]\nName=Not a unit\n[ANIM1]\nName=Not an animation\n[BREAKGUN]\nName=Break gun\nProjectile=CHAINPROJ\n[CHAINPROJ]\nAirburstWeapon=CHAINGUN\n[CHAINGUN]\nWarhead=CHAINWH\n[CHAINWH]\nCrit.Warhead=ROOT\n[REVENGE]\nName=Revenge gun\n[EXTRA]\nVerses=100%\n[SHIELD]\nStrength=100\n[EFFECT]\nDuration=150\n[ROOT]\nVerses=100%\nVersus.custom=100%\nCrit.Warhead=EXTRA\nShield.BreakWeapon=BREAKGUN\nSuppressRevengeWeapons.Types=REVENGE,BREAKGUN\nShield.AttachTypes=SHIELD, MissingShield,SHIELD\nShield.RemoveTypes=SHIELD\nAttachEffect.AttachTypes=EFFECT\nAttachEffect.RemoveTypes=ROOT\nSuppressReflectDamage.Types=EFFECT\nDetonateOnAllMapObjects.AffectTypes=OLD,FOOT,MISSINGUNIT,AMBIG\nConvert2.From=OLD\nConvert2.To=NEW\nAnimList=ANIM1,ANIM2\n`;
+frame.addEventListener('load', async () => { try {
+  const w = frame.contentWindow, d = frame.contentDocument, transfer = new w.DataTransfer();
+  transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await wait(() => d.querySelector('[data-entity="OLD"]'), 'fixture did not load');
+  const choose = (type, id) => { d.querySelector(`[data-category="${type}"]`).click(); const item = d.querySelector(`[data-entity="${id}"][data-type="${type}"]`); check(item, `${type} ${id} missing`); item.click(); };
+  const relations = () => d.querySelector('[data-tab="relations"]').click();
+  const ref = (key, id) => [...d.querySelectorAll('.ref')].find(row => row.querySelector('.ref-title')?.textContent.includes(`/ ${key}`) && row.querySelector('.ref-code')?.textContent.includes(id));
+  const back = () => d.querySelector('[data-action="nav-back"]').click();
+  choose('warhead', 'ROOT'); relations();
+  for (const [key, id, type] of [['Crit.Warhead','EXTRA','warhead'], ['Shield.BreakWeapon','BREAKGUN','weapon'], ['SuppressRevengeWeapons.Types','REVENGE','weapon'], ['Shield.AttachTypes','SHIELD','shield'], ['AttachEffect.AttachTypes','EFFECT','attachtype'], ['AttachEffect.RemoveTypes','ROOT','attachtype'], ['Convert2.From','OLD','vehicle'], ['Convert2.To','NEW','vehicle'], ['DetonateOnAllMapObjects.AffectTypes','FOOT','infantry']]) {
+    check(ref(key, id)?.querySelector(`[data-jump="${id}"][data-type="${type}"]`), `missing ${key} -> ${id}`);
+  }
+  check(d.querySelectorAll('[data-jump="SHIELD"][data-type="shield"]').length === 3, 'shield roles or duplicates were lost');
+  check(ref('Shield.AttachTypes', 'MissingShield')?.querySelector('[data-jump="MissingShield"]'), 'missing shield not discoverable');
+  for (const id of ['MISSINGUNIT', 'AMBIG']) check(!ref('DetonateOnAllMapObjects.AffectTypes', id)?.querySelector('[data-jump]'), `uncertain unit ${id} linked to the wrong type`);
+  check(d.querySelector('[data-jump="ArmorTypes"][data-type="global"]'), 'extended armor types link missing');
+  const animation = [...d.querySelectorAll('details')].find(item => item.textContent.includes('动画资源')); check(animation, 'animation group missing');
+  check(ref('AnimList','ANIM1') && !ref('AnimList','ANIM1').querySelector('[data-jump]'), 'animation incorrectly linked to same-named weapon');
+  ref('Shield.AttachTypes','SHIELD').querySelector('[data-jump]').click(); relations();
+  let rows = [...d.querySelectorAll('[data-jump="ROOT"][data-type="warhead"]')].map(button => button.closest('.ref').textContent);
+  check(rows.some(text => text.includes('Shield.AttachTypes')) && rows.some(text => text.includes('Shield.RemoveTypes')), 'shield reverse roles missing'); back();
+  ref('AttachEffect.RemoveTypes','ROOT').querySelector('[data-jump]').click(); relations();
+  check(d.querySelector('[data-jump="ROOT"][data-type="warhead"]')?.closest('.ref').textContent.includes('AttachEffect.RemoveTypes'), 'same-ID attach effect reverse reference missing'); back();
+  ref('Shield.BreakWeapon','BREAKGUN').querySelector('[data-jump]').click();
+  check(d.querySelector('.usage-notice').textContent.includes('1 个弹头'), 'weapon reverse usage missing'); relations();
+  check(d.querySelector('[data-jump="ROOT"][data-type="warhead"]')?.closest('.ref').textContent.includes('Shield.BreakWeapon'), 'weapon reverse role missing');
+  const projectile = d.querySelector('[data-jump="CHAINPROJ"][data-type="projectile"]'); check(projectile, 'unregistered break weapon projectile not discovered'); projectile.click(); relations();
+  const child = d.querySelector('[data-jump="CHAINGUN"][data-type="weapon"]'); check(child, 'projectile child weapon not discovered'); child.click(); relations();
+  check(d.querySelector('[data-jump="CHAINWH"][data-type="warhead"]'), 'nested warhead not discovered'); back(); back(); back();
+  ref('Convert2.To','NEW').querySelector('[data-jump]').click();
+  check(d.querySelector('.usage-notice').textContent.includes('1 个弹头'), 'unit reverse usage missing'); relations();
+  check(d.querySelector('[data-jump="ROOT"][data-type="warhead"]')?.closest('.ref').textContent.includes('Convert2.To'), 'unit reverse role missing'); back();
+  d.querySelector('[data-tab="raw"]').click(); const field = d.querySelector('[data-field="Shield.AttachTypes"]'); field.value = 'SHIELD'; field.dispatchEvent(new w.Event('change',{bubbles:true})); await delay(50); relations();
+  check(d.querySelectorAll('[data-jump="SHIELD"][data-type="shield"]').length === 2 && !ref('Shield.AttachTypes','MissingShield'), 'relations did not update after editing');
+  result.textContent = 'PASS: warhead objects, ordered references, reverse roles, ambiguous IDs, animation resources and live edits';
+} catch (error) { result.textContent = 'FAIL: ' + error.stack; }});
+</script></body></html>

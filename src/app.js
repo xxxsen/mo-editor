@@ -7,6 +7,7 @@ import { availableFields } from './field-catalog.js';
 import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
 import { warheadSuperweaponReferences } from './warhead-superweapons.js';
+import { warheadReferences } from './warhead-references.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature, garrisonWeaponWarning, passengerWeapons, preparePassengerFire } from './quick-features.js';
 import { unitWeaponSlots, prepareIsolatedWeapon } from './object-impact.js';
@@ -179,14 +180,30 @@ function buildEntities() {
     if (linked && !warheadIds.some(item => lower(item) === lower(linked))) warheadIds.push(linked);
   }
   for (const id of unique(warheadIds)) add(id, 'warhead');
-  for (const entity of entities.filter(item => item.type === 'warhead')) {
-    for (const ref of warheadSuperweaponReferences(project, entity.id)) add(ref.id, 'superweapon');
-  }
   for (const entity of [...entities]) {
     const keys = unitTypes.has(entity.type) ? [['ShieldType', 'shield'], ['AttachEffect.AttachTypes', 'attachtype']]
-      : entity.type === 'warhead' ? [['AttachEffect.AttachTypes', 'attachtype'], ['AttachEffect.RemoveTypes', 'attachtype'], ['SuppressReflectDamage.Types', 'attachtype'], ...['Shield.AffectTypes', 'Shield.Penetrate.Types', 'Shield.Break.Types', 'Shield.Respawn.Types', 'Shield.SelfHealing.Types', 'Shield.AttachTypes', 'Shield.RemoveTypes'].map(key => [key, 'shield'])]
-        : entity.type === 'weapon' ? [['RadType', 'radiation'], ['AttachEffect.RequiredTypes', 'attachtype'], ['AttachEffect.DisallowedTypes', 'attachtype']] : [];
+      : entity.type === 'weapon' ? [['RadType', 'radiation'], ['AttachEffect.RequiredTypes', 'attachtype'], ['AttachEffect.DisallowedTypes', 'attachtype']] : [];
     for (const [field, type] of keys) for (const id of val(entity.id, field).split(',').map(item => item.trim()).filter(Boolean)) add(id, type);
+  }
+  // Follow newly discovered objects as well, including cycles and chains such
+  // as warhead -> break weapon -> projectile -> child weapon -> warhead.
+  for (let i = 0; i < entities.length; i++) {
+    const entity = entities[i], id = entity.id;
+    if (entity.type === 'warhead') {
+      for (const ref of warheadReferences(project, id)) if (['warhead', 'superweapon', 'weapon', 'shield', 'attachtype'].includes(ref.type)) add(ref.id, ref.type);
+    } else if (entity.type === 'weapon') {
+      add(val(id, 'Projectile'), 'projectile');
+      for (const ref of weaponWarheadReferences(project, id)) add(ref.id, 'warhead');
+      for (const [key, type] of [['RadType', 'radiation'], ['AttachEffect.RequiredTypes', 'attachtype'], ['AttachEffect.DisallowedTypes', 'attachtype']]) {
+        for (const value of val(id, key).split(',')) add(value, type);
+      }
+    } else if (entity.type === 'projectile') {
+      for (const key of ['AirburstWeapon', 'ShrapnelWeapon', 'ReturnWeapon', 'Interceptable.WeaponOverride']) add(val(id, key), 'weapon');
+    } else if (entity.type === 'superweapon') {
+      for (const key of ['SW.Warhead', 'Detonate.Warhead']) add(val(id, key), 'warhead');
+      for (const key of ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon']) add(val(id, key), 'weapon');
+      for (const value of val(id, 'SW.Next').split(',')) add(value, 'superweapon');
+    }
   }
   return entities;
 }
@@ -810,6 +827,16 @@ function warheadsTriggeringSuperweapon(id) {
     warhead, refs: warheadSuperweaponReferences(state.project, warhead.id).filter(ref => lower(ref.id) === lower(id)),
   })).filter(item => item.refs.length);
 }
+function technoEntity(id) {
+  const matches = state.entities.filter(item => unitTypes.has(item.type) && lower(item.id) === lower(id));
+  return matches.length === 1 ? matches[0] : null;
+}
+function warheadsReferencingTarget(type, id) {
+  return state.entities.filter(item => item.type === 'warhead').map(warhead => ({
+    warhead,
+    refs: warheadReferences(state.project, warhead.id).filter(ref => lower(ref.id) === lower(id) && (ref.type === type || (ref.type === 'techno' && unitTypes.has(type) && technoEntity(ref.id)?.type === type))),
+  })).filter(item => item.refs.length);
+}
 function phobosUsers(entity) {
   if (entity.type === 'lasertrail') {
     const users = [];
@@ -822,11 +849,16 @@ function phobosUsers(entity) {
   const fields = entity.type === 'shield' ? ['ShieldType', 'Shield.AffectTypes', 'Shield.Penetrate.Types', 'Shield.Break.Types', 'Shield.Respawn.Types', 'Shield.SelfHealing.Types', 'Shield.AttachTypes', 'Shield.RemoveTypes'] : entity.type === 'attachtype'
     ? ['AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes', 'AttachEffect.RequiredTypes', 'AttachEffect.DisallowedTypes', 'SuppressReflectDamage.Types']
     : entity.type === 'radiation' ? ['RadType'] : [];
-  return state.entities.filter(item => item.type !== 'sections' && item.type !== 'global' && item.id !== entity.id).flatMap(item => fields
-    .filter(key => val(item.id, key).split(',').some(value => lower(value.trim()) === lower(entity.id)))
-    .map(key => ({ entity: item, key })));
+  return state.entities.filter(item => item.type !== 'sections' && item.type !== 'global' && (item.type !== entity.type || lower(item.id) !== lower(entity.id))).flatMap(item => {
+    if (item.type === 'warhead') return [...new Set(warheadReferences(state.project, item.id).filter(ref => ref.type === entity.type && lower(ref.id) === lower(entity.id)).map(ref => ref.key))].map(key => ({ entity: item, key }));
+    return fields.filter(key => val(item.id, key).split(',').some(value => lower(value.trim()) === lower(entity.id))).map(key => ({ entity: item, key }));
+  });
 }
 function usageMarkup(entity) {
+  if (unitTypes.has(entity.type)) {
+    const warheads = warheadsReferencingTarget(entity.type, entity.id);
+    return warheads.length ? `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${warheads.length} 个弹头引用此对象</strong><p>这些引用可能用于目标筛选或单位转换，具体效果取决于弹头配置。</p></div><button type="button" class="text-action" data-action="show-referrers">查看引用</button></div>` : '';
+  }
   if (entity.type === 'superweapon') {
     const warheads = warheadsTriggeringSuperweapon(entity.id);
     return warheads.length ? `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${warheads.length} 个弹头通过 LaunchSW 触发此超级武器</strong><p>修改此配置可能影响这些弹头及其他提供者。</p></div><button type="button" class="text-action" data-action="show-referrers">查看引用</button></div>` : '';
@@ -844,19 +876,36 @@ function usageMarkup(entity) {
   const users = weapon ? referencesTo(entity.id) : weaponsReferencingWarhead(entity.id).map(item => item.weapon);
   const count = users.length;
   const supers = superweaponsReferencing(entity.id, weapon ? ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon'] : ['SW.Warhead', 'Detonate.Warhead']).length;
+  const weaponWarheads = weapon ? warheadsReferencingTarget('weapon', entity.id) : [];
   const critParents = weapon ? [] : state.entities.filter(item => item.type === 'warhead' && lower(val(item.id, 'Crit.Warhead').trim()) === lower(entity.id));
-  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${critParents.length ? `、${critParents.length} 个暴击弹头` : ''}${weapon ? '使用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p>${count ? `<p>例如：${h(users.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count || supers || critParents.length ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
+  return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${count} 个${weapon ? '对象' : '武器'}${supers ? `、${supers} 个超级武器` : ''}${critParents.length ? `、${critParents.length} 个暴击弹头` : ''}${weaponWarheads.length ? `、${weaponWarheads.length} 个弹头` : ''}${weapon ? '引用此武器' : '引用此弹头'}</strong><p>修改配置可能影响这些使用者；特殊规则可能未列出。</p>${count ? `<p>例如：${h(users.slice(0, 4).map(item => item.name || item.id).join('、'))}${count > 4 ? ' 等' : ''}</p>` : ''}</div>${count || supers || critParents.length || weaponWarheads.length ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
 }
 function grantedSuperweapons(entity) {
   return ['SuperWeapon', 'SuperWeapon2', 'SuperWeapons'].flatMap(key => val(entity.id, key).split(',')
     .map(id => id.trim()).filter(id => id && !/^(?:none|<none>)$/i.test(id)).map(id => ({ id, key })));
 }
 function refMarkup(title, id, type, source = null) {
-  const target = entityFor(id, type) || entityFor(id) || (type === 'sections' && state.project.section(id) ? { id, type, name: id } : null);
+  const target = source?.noTarget ? null : entityFor(id, type) || (!source?.strict && entityFor(id)) || (type === 'sections' && state.project.section(id) ? { id, type, name: id } : null);
   const heading = source ? fieldNameMarkup(fieldInfoFor(source.entity, source.key), source.key, 'ref-title', source.note) : `<div class="ref-title">${h(title)}</div>`;
   const via = source ? `${fieldInfoFor(source.entity, source.key).label} / ${source.key}${source.note ? `（${source.note}）` : ''}` : title;
   const name = target && lower(target.name) !== lower(target.id) ? ` · ${h(target.name)}` : '';
   return `<div class="ref"><div class="ref-icon">${icon(type || 'link', 16)}</div><div>${heading}<div class="ref-code">${h(id || '未设置')}${name}</div>${source?.note ? `<div class="field-source">${h(source.note)}</div>` : ''}</div>${target ? `<button class="btn sm" data-jump="${h(target.id)}" data-type="${h(target.type)}" data-via="${h(via)}">查看 ${icon('chevron', 12)}</button>` : ''}</div>`;
+}
+function warheadRefMarkup(entity, ref) {
+  const target = ref.type === 'techno' ? technoEntity(ref.id) : null;
+  const type = ref.type === 'techno' ? target?.type || 'techno' : ref.type;
+  const notes = [];
+  if (ref.index !== undefined) notes.push(lower(ref.key) === 'launchsw' ? `第 ${ref.index + 1} 个触发的超级武器` : `第 ${ref.index + 1} 项`);
+  if (ref.type === 'techno' && !target) notes.push('未登记或无法确定对象类型');
+  if (ref.type === 'animation') notes.push('动画定义通常位于美术规则');
+  return refMarkup('', ref.id, type, { entity, key: ref.key, note: notes.join(' · '), strict: true, noTarget: ref.type === 'animation' || (ref.type === 'techno' && !target) });
+}
+function warheadReferrerMarkup(warheads) {
+  return warheads.map(({ warhead, refs }) => {
+    const keys = [...new Map(refs.map(ref => [lower(ref.key), ref.key])).values()];
+    const roles = keys.map(key => `${fieldInfoFor(warhead, key).label} / ${key}`).join('、');
+    return refMarkup(`弹头 · ${roles}`, warhead.id, 'warhead');
+  }).join('');
 }
 function renderRelations(entity) {
   let items = '';
@@ -864,13 +913,14 @@ function renderRelations(entity) {
   if (entity.type === 'weapon') {
     const users = referencesTo(entity.id);
     const supers = superweaponsReferencing(entity.id, ['WeaponType', 'Nuke.Payload', 'Detonate.Weapon']);
-    description = `根据已加载对象的常用武器字段和超级武器设置，发现 ${users.length} 个对象及 ${supers.length} 个超级武器引用；其他特殊武器逻辑可能未列出。`;
+    const warheads = warheadsReferencingTarget('weapon', entity.id);
+    description = `发现 ${users.length} 个对象、${supers.length} 个超级武器及 ${warheads.length} 个弹头引用此武器；其他特殊武器逻辑可能未列出。`;
     items = refMarkup('', val(entity.id, 'Projectile'), 'projectile', { entity, key: 'Projectile' });
     items += refMarkup('弹头', val(entity.id, 'Warhead'), 'warhead', { entity, key: 'Warhead' });
     const bomb = weaponWarheadReferences(state.project, entity.id).find(ref => ref.key === 'IvanBomb.Warhead');
     if (bomb) items += refMarkup('', bomb.id, 'warhead', { entity, key: bomb.key, note: bomb.source === 'global' ? '沿用 [CombatDamage]IvanWarhead' : '' });
     for (const ref of weaponWarheadReferences(state.project, entity.id).filter(ref => ref.key === 'ExtraWarheads')) items += refMarkup('', ref.id, 'warhead', { entity, key: ref.key, note: `第 ${ref.index + 1} 个额外弹头` });
-    if (users.length || supers.length) items += `<div class="block-divider"></div><div class="section-head" data-ref-users><div><h3>使用此武器的对象</h3><p>修改武器可能同时影响这些对象。</p></div></div>` + users.map(user => refMarkup(labelFor(user.type), user.id, user.type)).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('');
+    if (users.length || supers.length || warheads.length) items += `<div class="block-divider"></div><div class="section-head" data-ref-users><div><h3>引用此武器的规则</h3><p>字段的具体作用取决于对应规则。</p></div></div>` + users.map(user => refMarkup(labelFor(user.type), user.id, user.type)).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('') + warheadReferrerMarkup(warheads);
   } else if (entity.type === 'projectile') {
     const weapons = weaponsReferencingProjectile(entity.id);
     description = `根据已加载武器的 Projectile 字段，发现 ${weapons.length} 个引用；未加载或特殊逻辑可能未列出。`;
@@ -883,9 +933,13 @@ function renderRelations(entity) {
     const supers = superweaponsReferencing(entity.id, ['SW.Warhead', 'Detonate.Warhead']);
     const critParents = state.entities.filter(item => item.type === 'warhead' && lower(val(item.id, 'Crit.Warhead').trim()) === lower(entity.id));
     description = `根据已加载的规则，发现 ${weapons.length} 个武器和 ${supers.length} 个超级武器引用此弹头；包括直接命中弹头和炸弹弹头。`;
-    const crit = val(entity.id, 'Crit.Warhead');
-    if (crit && !/^(?:none|<none>)$/i.test(crit)) items += refMarkup('', crit, 'warhead', { entity, key: 'Crit.Warhead' });
-    for (const ref of warheadSuperweaponReferences(state.project, entity.id)) items += refMarkup('', ref.id, 'superweapon', { entity, key: ref.key, note: `第 ${ref.index + 1} 个触发的超级武器` });
+    const references = warheadReferences(state.project, entity.id);
+    const objects = references.filter(ref => ref.type !== 'animation');
+    const animations = references.filter(ref => ref.type === 'animation');
+    if (objects.length) items += '<div class="section-head"><div><h3>引用的规则对象</h3></div></div>' + objects.map(ref => warheadRefMarkup(entity, ref)).join('');
+    const armorCount = [...state.project.section(entity.id).fields.values()].filter(field => /^versus\.[^.]+$/i.test(field.name)).length;
+    if (armorCount && state.project.section('ArmorTypes')) items += refMarkup(`扩展装甲类型 · 已设置 ${armorCount} 项 Versus`, 'ArmorTypes', 'global');
+    if (animations.length) items += `<details class="armor-overrides"><summary>动画资源 <small>${animations.length} 项</small>${icon('chevron', 14)}</summary><div class="armor-overrides-content"><p>这里显示弹头引用的动画代码；动画定义通常位于美术规则中。</p><div class="refs">${animations.map(ref => warheadRefMarkup(entity, ref)).join('')}</div></div></details>`;
     const incoming = weapons.map(({ weapon, refs }) => {
       const roles = refs.map(ref => `${fieldInfoFor(weapon, ref.key).label}${ref.source === 'global' ? '（全局默认）' : ''}`).join('、');
       return refMarkup(`武器 · ${roles}`, weapon.id, 'weapon');
@@ -895,7 +949,7 @@ function renderRelations(entity) {
   } else if (['shield', 'attachtype', 'radiation', 'lasertrail'].includes(entity.type)) {
     const users = phobosUsers(entity);
     description = `发现 ${users.length} 处已加载的引用；修改此定义会影响这些对象。`;
-    items = users.length ? '<div class="section-head" data-ref-users><div><h3>引用此对象的规则</h3></div></div>' + users.map(user => refMarkup(`${labelFor(user.entity.type)} · ${user.key}`, user.entity.id, user.entity.type)).join('') : '<p class="ref-note">当前没有发现引用。</p>';
+    items = users.length ? '<div class="section-head" data-ref-users><div><h3>引用此对象的规则</h3></div></div>' + users.map(user => refMarkup(`${labelFor(user.entity.type)} · ${fieldInfoFor(user.entity, user.key).label} / ${user.key}`, user.entity.id, user.entity.type)).join('') : '<p class="ref-note">当前没有发现引用。</p>';
   } else if (entity.type === 'superweapon') {
     const providers = state.entities.filter(item => unitTypes.has(item.type) && grantedSuperweapons(item).some(ref => lower(ref.id) === lower(entity.id)));
     const warheads = warheadsTriggeringSuperweapon(entity.id);
@@ -919,6 +973,8 @@ function renderRelations(entity) {
     if (users.length > 1) items += `<div class="source-bar">${icon('info',16)}<div><strong>主武器被 ${users.length} 个已识别对象使用。</strong><br>修改武器定义可能同时影响它们。</div></div>`;
     const supers = grantedSuperweapons(entity);
     if (supers.length) items += `<div class="block-divider"></div>` + supers.map(ref => refMarkup('', ref.id, 'superweapon', { entity, key: ref.key })).join('');
+    const warheads = warheadsReferencingTarget(entity.type, entity.id);
+    if (warheads.length) items += '<div class="section-head" data-ref-users><div><h3>引用此对象的弹头</h3></div></div>' + warheadReferrerMarkup(warheads);
   }
   return `<div class="detail-body"><div class="section-head"><div><h3>关联关系</h3><p>${h(description)}</p></div><span class="section-num">REFERENCES</span></div><div class="refs">${items}</div></div>`;
 }
