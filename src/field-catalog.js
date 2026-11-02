@@ -59,6 +59,8 @@ export function availableFields(project, entity, entities = [], pending = []) {
     add('LaserTrail.Types', 'documented');
   }
   if (entity.type === 'warhead') {
+    for (const prefix of ['Convert', 'Convert0', 'Convert1']) for (const suffix of ['From', 'To', 'AffectedHouses']) add(`${prefix}.${suffix}`, 'documented');
+    for (const prefix of ['SpawnsCrate', 'SpawnsCrate0', 'SpawnsCrate1']) for (const suffix of ['Type', 'Weight']) add(`${prefix}.${suffix}`, 'documented');
     for (const field of project.section('ArmorTypes')?.fields.values() || []) {
       for (const suffix of ['', '.ForceFire', '.Retaliate', '.PassiveAcquire']) add(`Versus.${field.name}${suffix}`, 'documented');
     }

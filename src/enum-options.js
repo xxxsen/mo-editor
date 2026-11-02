@@ -44,6 +44,12 @@ const definitions = {
   phobosInterceptorSlot: { title: '选择拦截武器槽', options: make('Phobos 0.4', [['0', '主武器'], ['1', '副武器']]) },
   phobosAutoDeath: { title: '选择自动销毁方式', options: make('Phobos 0.4', [['kill', '正常摧毁'], ['vanish', '直接移除'], ['sell', '出售建筑']]) },
   phobosHouses: { title: '选择所属方范围', multiple: true, exclusive: ['none', 'all'], options: make('Phobos 0.4', [['none', '无'], ['owner', '自身'], ['allies', '盟友'], ['team', '自身与盟友'], ['enemies', '敌方'], ['all', '全部']]) },
+  phobosHouse: { title: '选择所属方范围', description: '此字段选择一个所属方范围；原有未识别值会保留。', options: make('Phobos 0.4', [['none', '无'], ['owner', '自身'], ['allies', '盟友'], ['team', '自身与盟友'], ['enemies', '敌方'], ['all', '全部']]) },
+  phobosTechnoTargets: { title: '选择全图引爆目标', multiple: true, exclusive: ['none', 'all'], options: make('Phobos 0.4', [['none', '无'], ['aircraft', '飞机'], ['buildings', '建筑'], ['infantry', '步兵'], ['units', '载具'], ['all', '全部']]) },
+  phobosCrateType: { title: '选择箱子类型', options: make('Phobos 0.4', [['money', '资金'], ['unit', '单位'], ['healbase', '修复基地'], ['cloak', '隐形'], ['explosion', '爆炸'], ['napalm', '火焰'], ['squad', '步兵小队'], ['reveal', '揭开地图'], ['armor', '装甲提升'], ['speed', '速度提升'], ['firepower', '火力提升'], ['icbm', '超级武器'], ['invulnerability', '无敌'], ['veteran', '等级提升'], ['ionstorm', '离子风暴'], ['gas', '毒气'], ['tiberium', '矿石'], ['pod', '空降舱']]) },
+  killDriverOwner: { title: '选择驾驶员被清除后的所属方', options: make('Ares 3.0', [['civilian', '平民'], ['special', '特殊'], ['neutral', '中立']]) },
+  nonHumanDeath: { title: '选择非人类死亡动作', options: make('Phobos 0.4', [['1', 'Die1'], ['2', 'Die2'], ['3', 'Die3'], ['4', 'Die4'], ['5', 'Die5']]) },
+
   phobosTargets: { title: '选择暴击目标类型', multiple: true, exclusive: ['none', 'all'], options: make('Phobos 0.4', [['none', '无'], ['land', '陆地'], ['water', '水面'], ['infantry', '步兵'], ['units', '载具'], ['buildings', '建筑'], ['all', '全部']]) },
 
   abilities: {
@@ -120,12 +126,18 @@ const technoBooleans = new Set(`trainable experience.frompassengers experience.p
 const projectileBooleans = new Set(`inviso aa ag an as asw arcing inaccurate proximity shadow high veryhigh level vertical dropping subjecttocliffs subjecttoelevation subjecttowalls subjecttobuildings subjecttotrenches ignoresfirestorm ranged airburst splits aroundtarget retargetself flakscatter firerspalette scalable rotates`.split(' '));
 const superweaponBooleans = new Set(`ispowered showtimer disableablefromshell sw.initialready sw.virtualcharge sw.autofire sw.manualfire sw.fireintoshroud sw.useaitargeting sw.showcameo`.split(' '));
 const weaponBooleans = new Set(`revealonfire fireintransport ivanbomb.detachable ivanbomb.destroysbridges decloaktofire omnifire bright islaser issonic israilgun isradbeam`.split(' '));
-const warheadBooleans = new Set(`ivanbomb mindcontrol temporal psychicdamage psychedelic poison radiation preventscatter malicious rocker`.split(' '));
+const warheadBooleans = new Set(`ivanbomb mindcontrol temporal psychicdamage psychedelic poison radiation preventscatter malicious rocker affectsallies affectsenemies affectsowner wall wood tiberium sparky conventional bright cldisablered cldisablegreen cldisableblue bullets emeffect wallabsolutedestroyer fire killdriver killdriver.removeveterancy causesdelaykill effectsrequiredamage effectsrequireverses allowzerodamage penetratesbunker relativedamage islocomotor bombdisarm parasite electricassault airstrike nukemaker makesdisguise sonic directrocker veinhole attacheffect.cumulative attacheffect.animresetonreapply`.split(' '));
 const phobosBooleans = {
   unit: new Set(['interceptor', 'interceptor.deleteonintercept', 'passengers.syncowner', 'passengers.syncowner.revertonexit', 'passengerdeletion.dontscore', 'passengerdeletion.rate.sizemultiply', 'passengerdeletion.soylent', 'autodeath.onammodepletion', 'immunetocrit', 'multimindcontrol.releasevictim']),
   weapon: new Set(['burst.firewithinsequence', 'attacheffect.checkonfirer']),
   projectile: new Set(['interceptable', 'interceptable.deleteonintercept', 'trajectory.straight.passthrough']),
-  warhead: new Set(['crit.applychancepertarget', 'crit.warhead.fulldetonation', 'shield.penetrate', 'shield.break']),
+  warhead: new Set(`crit.applychancepertarget crit.warhead.fulldetonation crit.animlist.pickrandom crit.animlist.createall crit.animonaffectedtargets crit.suppresswhenintercepted
+    shield.penetrate shield.break shield.skiphitanim shield.hitflash shield.respawn.restarttimer shield.selfhealing.restartincombat shield.selfhealing.restarttimer
+    shield.removeall shield.replaceonly shield.replacenonrespawning shield.inheritstateonreplace launchsw.reallaunch launchsw.ignoreinhibitors launchsw.ignoredesignators launchsw.displaymoney
+    removemindcontrol removedisguise removeparasite spysat biggap detonateonallmapobjects detonateonallmapobjects.full detonateonallmapobjects.requireverses
+    transactmoney.display transactmoney.display.atfirer penetratesironcurtain penetratesforceshield suppressrevengeweapons suppressreflectdamage
+    attacheffect.cumulativerefreshall attacheffect.cumulativerefreshall.onattach attacheffect.cumulativerefreshsamesourceonly
+    allowdamageonself clisblack debris.conventional animlist.pickrandom animlist.createall splashlist.pickrandom splashlist.createall createanimsonzerodamage conventional.ignoreunits decloakdamagedtargets nonprovocative shakeislocal`.split(/\s+/)),
   superweapon: new Set(['detonate.atfirer', 'detonate.warhead.full', 'sw.next.reallaunch']),
   shield: new Set(['inheritarmorfromtechno', 'powered', 'absorboverdamage', 'selfhealing.restartincombat', 'immunetocrit']),
   attachtype: new Set(['cumulative', 'powered', 'cloakable', 'forcedecloak']),
@@ -143,6 +155,14 @@ export function enumKindForField(type, field) {
   if (units.has(type) && name === 'autodeath.behavior') return 'phobosAutoDeath';
   if (type === 'projectile' && name === 'trajectory') return 'phobosTrajectory';
   if (type === 'warhead' && name === 'crit.affects') return 'phobosTargets';
+  if (type === 'warhead' && name === 'launchsw.displaymoney.houses') return 'phobosHouse';
+  if (type === 'warhead' && name === 'transactmoney.display.houses') return 'phobosHouse';
+  if (type === 'warhead' && name === 'detonateonallmapobjects.affecttargets') return 'phobosTechnoTargets';
+  if (type === 'warhead' && (name === 'detonateonallmapobjects.affecthouses' || /^convert\d*\.affectedhouses$/.test(name))) return 'phobosHouses';
+  if (type === 'warhead' && /^spawnscrate\d*\.type$/.test(name)) return 'phobosCrateType';
+  if (type === 'warhead' && name === 'killdriver.owner') return 'killDriverOwner';
+  if (type === 'warhead' && name === 'nothuman.deathsequence') return 'nonHumanDeath';
+
   if ((type === 'warhead' && name === 'crit.affectshouses') || (units.has(type) && /^passengerdeletion\.(allowedhouses|soylentallowedhouses)$/.test(name))) return 'phobosHouses';
   if ((units.has(type) && technoBooleans.has(name)) || (type === 'projectile' && projectileBooleans.has(name))
     || (type === 'superweapon' && superweaponBooleans.has(name)) || (type === 'weapon' && weaponBooleans.has(name))

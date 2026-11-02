@@ -29,8 +29,8 @@ npm run desktop:build
 | `src/ini.js`、`src/resources.js` | INI 解析与保留原格式的序列化；MIX、CSF、PCX 等资源读取 |
 | `src/field-metadata.js`、`src/field-catalog.js`、`src/enum-options.js`、`src/rule-schema.js` | 字段中文说明、可添加字段、选项和规则目录 |
 | `src/quick-features.js` | 快捷功能的适用类型、字段、建议值和预览校验 |
-| `src/phobos-fields.js`、`src/phobos-version.js`、`src/phobos-warheads.js` | Phobos 字段字典、DLL 版本读取及额外弹头的有序配置 |
-| `src/object-creation.js`、`src/object-impact.js`、`src/weapon-references.js` | 对象创建、关联复制和武器弹头引用 |
+| `src/phobos-fields.js`、`src/phobos-warhead-fields.js`、`src/phobos-version.js`、`src/phobos-warheads.js` | Phobos 字段字典、DLL 版本读取及额外弹头的有序配置 |
+| `src/object-creation.js`、`src/object-impact.js`、`src/weapon-references.js`、`src/warhead-superweapons.js` | 对象创建、关联复制和规则对象引用 |
 | `src/rule-analysis.js`、`src/history-diff.js` | 建造与武器对照、历史快照差异 |
 | `src/desktop.js`、`src-tauri/src/main.rs` | 前端桌面接口和 Tauri 命令 |
 | `src-tauri/src/store.rs` | 本地目录访问、保存、备份与恢复 |
@@ -38,7 +38,7 @@ npm run desktop:build
 
 字段对照表按单位、武器、投射物、弹头、超级武器、国家和全局规则段分组，每项依次为 `[中文名, 作用说明, 可选搜索别名, 可选常显提示]`。同名字段按对象类型或规则段匹配，编号武器、炮塔、加特林阶段、扩展装甲等由规则处理。新增字段和固定选项时，应确认引擎版本、适用对象、单选或多选语义，以及未知值保留行为。
 
-可添加字段目录汇总字段字典和当前项目同类对象的字段；目录不能保证涵盖所有字段，实际支持情况取决于游戏和扩展版本。字段含义主要依据原版 `rulesmd.ini` 注释和 [Ares 文档](https://ares-developers.github.io/Ares-docs/)。
+可添加字段目录汇总字段字典和当前项目同类对象的字段；目录不能保证涵盖所有字段，实际支持情况取决于游戏和扩展版本。字段含义主要依据原版 `rulesmd.ini` 注释、[Ares 文档](https://ares-developers.github.io/Ares-docs/)和 [Phobos 0.4 文档](https://phobos.readthedocs.io/en/v0.4/)。
 
 ## 测试
 
@@ -61,7 +61,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 - `object-creation-check.html`、`projectile-check.html`、`weapon-warheads-check.html`：新增对象及武器、弹头、投射物关联。
 - `quick-features-check.html`、`quick-features-extended-check.html`、`tech-buildings-check.html`、`quick-default-reset-check.html`：快捷功能、科技建筑及恢复默认值。
 - `analysis-check.html`：建造条件、武器效果和关联复制。
-- `phobos-check.html`、`phobos-desktop-check.html`：护盾选择、额外弹头、尾迹及跨主文件的桌面保存保护。
+- `phobos-check.html`、`phobos-desktop-check.html`、`warhead-launchsw-check.html`：护盾选择、额外弹头、弹头触发超级武器、尾迹及跨主文件的桌面保存保护。
 - `field-catalog-check.html`、`field-metadata-check.html`、`enum-choice-check.html`：字段目录、中文说明和选项编辑。
 - `resource-check.html`、`rules-source-check.html`、`main-file-picker-check.html`：资源、规则来源及主文件选择。
 - `structured-check.html`、`global-search-check.html`、`all-objects-search-check.html`、`garrison-weapons-check.html`：结构化设置、搜索和驻军武器。

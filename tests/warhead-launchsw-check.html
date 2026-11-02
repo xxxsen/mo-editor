@@ -1,0 +1,67 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Warhead superweapon fields</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1440" height="900"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const check = (value, message) => { if (!value) throw new Error(message); };
+const wait = async (fn, message) => { for (let i = 0; i < 250; i++) { if (fn()) return; await delay(20); } throw new Error(message); };
+const rules = `[VehicleTypes]\n0=TANK\n[Warheads]\n0=TowerPsiBreakWH\n1=EMPTY\n[SuperWeaponTypes]\n0=TowerPsiBreakSW\n1=OtherSW\n[ShieldTypes]\n0=SHIELD1\n1=SHIELD2\n[TANK]\nName=Tank\n[TowerPsiBreakWH]\nVerses=100%,100%\nVersus.animal=100%\nAffectsAllies=no\nLaunchSW=TowerPsiBreakSW\nLaunchSW.RealLaunch=no\nShield.RemoveTypes=SHIELD1, UnknownShield\n[EMPTY]\nVerses=100%\n[TowerPsiBreakSW]\nType=PsychicDominator\n[OtherSW]\nType=Custom\n[SHIELD1]\nStrength=100\n[SHIELD2]\nStrength=200\n`;
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument, transfer = new w.DataTransfer();
+  transfer.items.add(new w.File([rules], 'rulesmo.ini'));
+  const file = d.querySelector('#file-input'); file.files = transfer.files; file.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await wait(() => d.querySelector('[data-entity="TANK"]'), 'rules not loaded');
+  d.querySelector('[data-category="warhead"]').click(); d.querySelector('[data-entity="TowerPsiBreakWH"][data-type="warhead"]').click();
+  check(d.body.textContent.includes('Phobos 弹头触发超级武器'), 'LaunchSW section missing');
+  check(d.body.textContent.includes('引爆时触发超级武器') && d.body.textContent.includes('要求拥有触发的超级武器'), 'translated fields missing');
+  check(d.querySelector('[data-field="LaunchSW.RealLaunch"]')?.value === 'no', 'RealLaunch value missing');
+  check(d.querySelector('[data-action="choose-options"][data-kind="superweapons"][data-key="LaunchSW"]'), 'LaunchSW choice missing');
+  d.querySelector('[data-jump-field="LaunchSW"]').click();
+  check(d.body.textContent.includes('[TowerPsiBreakSW]'), 'single-superweapon navigation failed');
+  check(d.body.textContent.includes('1 个弹头通过 LaunchSW'), 'reverse usage notice missing');
+  d.querySelector('[data-tab="relations"]').click();
+  check(d.querySelector('[data-jump="TowerPsiBreakWH"][data-type="warhead"]'), 'reverse warhead relation missing');
+  d.querySelector('[data-jump="TowerPsiBreakWH"][data-type="warhead"]').click();
+  d.querySelector('[data-tab="raw"]').click();
+  const launch = d.querySelector('[data-field="LaunchSW"]');
+  check(launch.closest('.raw-row').textContent.includes('引爆时触发超级武器'), 'raw translated label missing');
+  check(launch.closest('.raw-row').title.includes('Phobos'), 'raw tooltip missing');
+  launch.value = 'TowerPsiBreakSW, UnknownSW, TowerPsiBreakSW'; launch.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(40);
+  d.querySelector('[data-action="choose-options"][data-kind="superweapons"][data-key="LaunchSW"]').click();
+  let dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-choice="UnknownSW"]')?.checked, 'unknown current superweapon was lost');
+  let choice = dialog.querySelector('[data-choice="OtherSW"]'); check(choice, 'registered superweapon missing'); choice.checked = true; choice.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="LaunchSW"]').value === 'TowerPsiBreakSW, UnknownSW, TowerPsiBreakSW,OtherSW', 'selection changed existing order, spacing or duplicates');
+  d.querySelector('[data-action="choose-options"][data-kind="shieldtypes"][data-key="Shield.RemoveTypes"]').click(); dialog = d.querySelector('#editor-dialog');
+  check(dialog.querySelector('[data-choice="UnknownShield"]')?.checked, 'unknown shield was lost');
+  choice = dialog.querySelector('[data-choice="SHIELD2"]'); check(choice, 'registered shield missing'); choice.checked = true; choice.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="Shield.RemoveTypes"]').value === 'SHIELD1, UnknownShield,SHIELD2', 'shield choice changed existing values');
+  d.querySelector('[data-tab="relations"]').click();
+  check(d.querySelectorAll('[data-jump="TowerPsiBreakSW"]').length === 2 && d.querySelector('[data-jump="UnknownSW"]') && d.querySelector('[data-jump="OtherSW"]'), 'multi-superweapon relations missing');
+  d.querySelector('[data-jump="UnknownSW"]').click();
+  check(d.querySelector('.no-detail')?.textContent.includes('被规则引用或列入类型列表'), 'missing superweapon definition was not explained correctly');
+  d.querySelector('[data-action="nav-back"]').click();
+  check(d.querySelector('[data-jump="OtherSW"]'), 'navigation did not restore warhead relations');
+  d.querySelector('[data-category="warhead"]').click(); d.querySelector('[data-entity="EMPTY"][data-type="warhead"]').click(); d.querySelector('[data-tab="raw"]').click();
+  d.querySelector('[data-action="add-field"]').click(); dialog = d.querySelector('#editor-dialog');
+  let search = dialog.querySelector('#new-field-search'); search.value = '触发超武时忽略抑制器'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const candidate = dialog.querySelector('[data-field-candidate="LaunchSW.IgnoreInhibitors"]'); check(candidate, 'missing field not found by its Chinese label'); candidate.click();
+  check(dialog.querySelector('[data-field-info]').textContent.includes('Phobos'), 'missing-field description missing');
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="LaunchSW.IgnoreInhibitors"]')?.value === '', 'missing field not added as a draft');
+  d.querySelector('[data-action="choose-options"][data-key="LaunchSW.IgnoreInhibitors"]').click(); dialog = d.querySelector('#editor-dialog');
+  choice = dialog.querySelector('[data-choice="yes"]'); choice.checked = true; choice.dispatchEvent(new w.Event('change', { bubbles: true }));
+  dialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="LaunchSW.IgnoreInhibitors"]').value === 'yes', 'missing field value not applied');
+  d.querySelector('[data-action="changes"]').click();
+  let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
+  check(saved.includes('LaunchSW=TowerPsiBreakSW, UnknownSW, TowerPsiBreakSW,OtherSW') && saved.includes('LaunchSW.RealLaunch=no'), 'export lost LaunchSW values');
+  check(saved.includes('LaunchSW.IgnoreInhibitors=yes') && saved.includes('Shield.RemoveTypes=SHIELD1, UnknownShield,SHIELD2'), 'export lost added field or shield choice');
+  result.textContent = 'PASS: translated warhead fields, superweapon navigation and multiple selection, missing-field catalog and export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

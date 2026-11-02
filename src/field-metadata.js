@@ -637,12 +637,39 @@ export const FIELD_METADATA = {
     PsychicDamage: ['心灵类伤害', '将弹头标记为心灵类伤害；这与心灵控制并非同一效果。'],
     'MindControl.Permanent': ['永久心灵控制', '使用该弹头的心灵控制效果是否为永久控制。'],
     KillDriver: ['清除载具驾驶员', '弹头是否清除目标载具的驾驶员；目标保护设置等条件仍然生效。'],
+    'KillDriver.Owner': ['驾驶员被清除后的所属方', 'Ares：驾驶员被清除后目标载具归属的所属方类别，可选 civilian、special 或 neutral。'],
+    'KillDriver.KillBelowPercent': ['清除驾驶员血量上限', 'Ares：目标生命比例不高于该值时才清除驾驶员；目标保护规则也可能降低上限。'],
+    'KillDriver.Chance': ['清除驾驶员概率', 'Ares：符合条件的目标被命中时清除驾驶员的概率。'],
+    'KillDriver.RemoveVeterancy': ['清除驾驶员时重置等级', 'Ares：清除驾驶员导致载具改变所属方时，是否将其等级重置为新兵。'],
+    'Flash.Duration': ['目标闪烁持续时间', 'Ares：命中目标闪烁的持续帧数；大于零时启用。'],
+    'Temporal.HealthFactor': ['时间抹除受血量影响', 'Ares：目标剩余生命对时间抹除剩余量的影响倍率，范围为 0 到 1。'],
+    'Temporal.WarpAway': ['时间抹除消失动画', 'Ares：此弹头抹除目标时使用的动画；未设置时使用全局 WarpAway。'],
+    RelativeDamage: ['按目标生命比例伤害', 'Ares：是否根据目标最大生命或当前生命计算伤害；需要按目标类别设置 RelativeDamage 对应字段。'],
+    'RelativeDamage.Buildings': ['建筑相对生命伤害', 'Ares：对建筑造成的生命比例伤害；正值基于最大生命，负值基于当前生命，范围为 -100 到 100。'],
+    'RelativeDamage.Aircraft': ['飞机相对生命伤害', 'Ares：对飞机造成的生命比例伤害；正值基于最大生命，负值基于当前生命，范围为 -100 到 100。'],
+    'RelativeDamage.Infantry': ['步兵相对生命伤害', 'Ares：对步兵造成的生命比例伤害；正值基于最大生命，负值基于当前生命，范围为 -100 到 100。'],
+    'RelativeDamage.Vehicles': ['载具相对生命伤害', 'Ares：对载具造成的生命比例伤害；正值基于最大生命，负值基于当前生命，范围为 -100 到 100。'],
+    'RelativeDamage.Terrain': ['地形对象相对生命伤害', 'Ares：对地形对象造成的生命比例伤害；正值基于最大生命，负值基于当前生命，范围为 -100 到 100。'],
+    IsLocomotor: ['改变目标运动方式', '弹头是否临时改变目标载具或飞机的运动方式；需要配合弹头的 Locomotor 设置。'],
+    Locomotor: ['目标临时运动方式', 'IsLocomotor=yes 时赋予目标的运动方式 CLSID；实际效果受目标类型与游戏版本限制。'],
+    BombDisarm: ['拆除附着炸弹', '弹头是否启用拆除附着炸弹的逻辑；实际操作依赖使用者和目标条件。'],
+    Parasite: ['寄生攻击弹头', '弹头是否启用寄生攻击逻辑；实际效果还取决于武器、投射物和目标类型。'],
+    ElectricAssault: ['电击充能弹头', '弹头是否使用电击充能相关逻辑；需要配合支持充能的建筑和武器。'],
+    Airstrike: ['呼叫空袭弹头', '弹头是否使用呼叫空袭的目标指定逻辑；需要配合单位的空袭设置。'],
+    NukeMaker: ['核弹载荷生成弹头', '弹头是否使用核弹载荷生成逻辑；需要配合相应武器和投射物。'],
+    MakesDisguise: ['获取目标伪装', '弹头是否使用获取目标外观的伪装逻辑；实际效果取决于使用者和目标。'],
+    Sonic: ['音波弹头标记', '弹头的音波伤害标记；具体表现还取决于武器和游戏引擎。'],
+    Poison: ['毒性弹头标记', '弹头的毒性伤害标记；参与毒素免疫及相关效果判定。'],
+    DirectRocker: ['直接摇晃目标', '弹头是否使用直接摇晃目标载具的逻辑；实际效果取决于游戏引擎。'],
+    Veinhole: ['矿脉洞弹头标记', '旧版矿脉洞相关弹头标记；具体是否生效取决于游戏与扩展版本。'],
+
     CausesDelayKill: ['触发延迟摧毁', '对允许延迟摧毁的建筑造成致命伤害时，是否使用延迟爆炸逻辑。'],
     DelayKillFrames: ['建筑延迟摧毁帧数', '直接命中允许延迟摧毁的建筑时，爆炸前等待的帧数。'],
     DelayKillAtMax: ['范围边缘延迟倍率', '弹头范围边缘的建筑延迟摧毁时间相对直接命中的倍率。'],
     DamageAirThreshold: ['空中伤害爆炸高度阈值', '爆炸高度超过此值时范围伤害可影响空中单位；-1 允许地面爆炸影响空中单位。'],
     EffectsRequireDamage: ['特殊效果需要造成伤害', '控制清除驾驶员、声呐、禁用武器和闪烁等 Ares 效果是否要求实际造成正伤害。'],
-    EffectsRequireVerses: ['特殊效果需要有效装甲倍率', '控制 Ares 弹头特殊效果是否要求目标装甲的 Verses 大于 0%。'],
+    EffectsRequireVerses: ['特殊效果需要有效装甲倍率', '控制 Ares 与 Phobos 的相关弹头特殊效果是否要求目标装甲的 Verses 大于 0%。'],
+    CellInset: ['自动部署范围内缩', '自动部署逻辑使用的范围内缩值，相对于 CellSpread 计算；实际生效情况取决于游戏版本与相关扩展。'],
     AllowZeroDamage: ['允许零伤害触发效果', '基础伤害为 0 时，是否仍向范围内对象传递弹头以触发特殊效果。'],
     'CellSpread.MaxAffect': ['单个对象受击次数上限', '一次范围弹头最多影响同一对象的次数；-1 表示不限制。'],
     'Sonar.Duration': ['声呐揭隐持续时间', '被弹头命中的对象在指定帧数内无法使用主动隐形能力。'],
@@ -662,6 +689,7 @@ export const FIELD_METADATA = {
     'AttachEffect.PenetratesIronCurtain': ['附加效果穿透铁幕', '是否允许附加效果作用于处于铁幕或力场护盾下的对象。'],
     'AttachEffect.TemporalHidesAnim': ['时间抹除时隐藏效果动画', '对象受到时间抹除效果时是否移除附加效果动画。'],
     'AttachEffect.Cumulative': ['附加效果可叠加', '弹头施加的附加效果是否允许叠加。'],
+    'AttachEffect.AnimResetOnReapply': ['重复施加时重置附加动画', 'Ares：不可叠加的弹头附加效果再次施加时，是否重新播放其动画。'],
     'AttachEffect.Delay': ['附加效果重置间隔', '对象自身附加效果结束后重新施加的等待帧数。'],
     'AttachEffect.InitialDelay': ['附加效果初始延迟', '对象首次获得自身附加效果前的等待帧数。'],
   },
@@ -1252,7 +1280,7 @@ const sections = Object.fromEntries(Object.entries(FIELD_METADATA.sections).map(
 const technoTypes = new Set(['infantry', 'vehicle', 'aircraft', 'building']);
 const difficultySections = new Set(['easy', 'normal', 'difficult']);
 const technoOnlyEffects = new Set(['attacheffect.delay', 'attacheffect.initialdelay']);
-const warheadOnlyEffects = new Set(['attacheffect.cumulative']);
+const warheadOnlyEffects = new Set(['attacheffect.cumulative', 'attacheffect.animresetonreapply']);
 
 // type 对应编辑器对象类型；section 是原始 INI 段名，globalKind 区分国家段。
 export function getFieldInfo(fieldName, { type = '', section = '', globalKind = '' } = {}) {
@@ -1289,6 +1317,21 @@ export function getFieldInfo(fieldName, { type = '', section = '', globalKind = 
     }
   } else if (['weapon', 'projectile', 'warhead', 'superweapon', 'shield', 'attachtype', 'radiation', 'lasertrail'].includes(type)) {
     definition = tables[type].get(name) || (type === 'warhead' && !technoOnlyEffects.has(name) ? tables.attachEffect.get(name) : null) || tables.common.get(name);
+    if (!definition && type === 'warhead') {
+      const convert = fieldName.match(/^Convert(\d*)\.(From|To|AffectedHouses)$/i);
+      const crate = fieldName.match(/^SpawnsCrate(\d*)\.(Type|Weight)$/i);
+      if (convert) {
+        const number = convert[1] === '' ? '' : ` ${Number(convert[1])}`;
+        const fields = { from: ['转换来源', '可被转换的步兵、载具或飞机类型列表；留空时不按类型限制。'], to: ['转换目标', '转换后的对象类型；目标与来源必须属于相同类别，不支持建筑。'], affectedhouses: ['转换所属方范围', '限制转换效果影响的目标所属方。'] };
+        const [label, detail] = fields[normalize(convert[2])];
+        definition = [`${label}${number}`, `Phobos：${detail} 需要 Ares 3.0 或更高版本。`];
+      } else if (crate) {
+        const number = crate[1] === '' ? '' : ` ${Number(crate[1])}`;
+        definition = normalize(crate[2]) === 'type'
+          ? [`生成箱子类型${number}`, 'Phobos：弹头引爆时可生成的随机箱子类型；无编号形式是第 0 项的备选写法。']
+          : [`生成箱子权重${number}`, 'Phobos：对应箱子类型的随机权重；0 表示无机会，默认 1。'];
+      }
+    }
     if (!definition && type === 'warhead') {
       const match = fieldName.match(/^Versus\.([^.]+)(?:\.(ForceFire|Retaliate|PassiveAcquire))?$/i);
       if (match) {

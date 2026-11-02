@@ -1,3 +1,5 @@
+import { PHOBOS_WARHEAD_FIELDS } from './phobos-warhead-fields.js';
+
 // Phobos 0.4 fields. Kept separate from Ares' inline AttachEffect fields:
 // https://phobos.readthedocs.io/en/v0.4/New-or-Enhanced-Logics.html
 export const PHOBOS_FIELDS = {
@@ -42,6 +44,7 @@ export const PHOBOS_FIELDS = {
     RadType: ['辐射类型', 'Phobos：此武器使用的辐射类型；实际产生辐射还需要相应武器设置。'],
   },
   warhead: {
+    ...PHOBOS_WARHEAD_FIELDS,
     'Crit.Chance': ['暴击概率', 'Phobos：弹头触发暴击的概率，0 到 1 或 0% 到 100%。'],
     'Crit.ApplyChancePerTarget': ['逐个目标判定暴击', 'Phobos：分别为每个目标判定暴击概率；否则每次弹头引爆判定一次。'],
     'Crit.ExtraDamage': ['暴击额外伤害', 'Phobos：暴击造成的附加伤害；设置 Crit.Warhead 时用于引爆指定弹头。'],

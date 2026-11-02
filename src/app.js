@@ -6,6 +6,7 @@ import { getFieldInfo } from './field-metadata.js';
 import { availableFields } from './field-catalog.js';
 import { enumKindForField, enumDefinition, enumChoices, selectEnumOption } from './enum-options.js';
 import { usesIvanBomb, weaponWarheadReferences } from './weapon-references.js';
+import { warheadSuperweaponReferences } from './warhead-superweapons.js';
 import { CREATE_TYPES, MAX_GAME_OBJECT_ID_LENGTH, prepareObjectCreation } from './object-creation.js';
 import { quickFeaturesFor, quickFeatureFields, prepareQuickFeature, garrisonWeaponWarning, passengerWeapons, preparePassengerFire } from './quick-features.js';
 import { unitWeaponSlots, prepareIsolatedWeapon } from './object-impact.js';
@@ -178,9 +179,12 @@ function buildEntities() {
     if (linked && !warheadIds.some(item => lower(item) === lower(linked))) warheadIds.push(linked);
   }
   for (const id of unique(warheadIds)) add(id, 'warhead');
+  for (const entity of entities.filter(item => item.type === 'warhead')) {
+    for (const ref of warheadSuperweaponReferences(project, entity.id)) add(ref.id, 'superweapon');
+  }
   for (const entity of [...entities]) {
     const keys = unitTypes.has(entity.type) ? [['ShieldType', 'shield'], ['AttachEffect.AttachTypes', 'attachtype']]
-      : entity.type === 'warhead' ? [['AttachEffect.AttachTypes', 'attachtype'], ['AttachEffect.RemoveTypes', 'attachtype']]
+      : entity.type === 'warhead' ? [['AttachEffect.AttachTypes', 'attachtype'], ['AttachEffect.RemoveTypes', 'attachtype'], ['SuppressReflectDamage.Types', 'attachtype'], ...['Shield.AffectTypes', 'Shield.Penetrate.Types', 'Shield.Break.Types', 'Shield.Respawn.Types', 'Shield.SelfHealing.Types', 'Shield.AttachTypes', 'Shield.RemoveTypes'].map(key => [key, 'shield'])]
         : entity.type === 'weapon' ? [['RadType', 'radiation'], ['AttachEffect.RequiredTypes', 'attachtype'], ['AttachEffect.DisallowedTypes', 'attachtype']] : [];
     for (const [field, type] of keys) for (const id of val(entity.id, field).split(',').map(item => item.trim()).filter(Boolean)) add(id, type);
   }
@@ -476,7 +480,7 @@ function renderDetail(entity) {
   const project = state.project;
   const sec = project.section(entity.id);
   const tab = state.tab;
-  const detailBody = !sec ? `<div class="no-detail"><div><strong>找不到这个对象的定义</strong>它被列入类型列表，但当前导入的文件中没有 [${h(entity.id)}]。<br>请检查是否缺少 include 文件。</div></div>` : tab === 'basic' ? renderBasic(entity) : tab === 'relations' ? renderRelations(entity) : renderRaw(entity);
+  const detailBody = !sec ? `<div class="no-detail"><div><strong>找不到这个对象的定义</strong>它被规则引用或列入类型列表，但当前导入的文件中没有 [${h(entity.id)}]。<br>请检查是否缺少 include 文件。</div></div>` : tab === 'basic' ? renderBasic(entity) : tab === 'relations' ? renderRelations(entity) : renderRaw(entity);
   return `${trailMarkup()}<div class="detail-top"><div class="detail-kicker">OBJECT DETAILS <span>/</span> ${h(entity.type.toUpperCase())}</div><div class="detail-hero"><div class="detail-icon" ${entity.type === 'projectile' ? '' : `data-icon-id="${h(entity.id)}"`}>${icon(entity.type, 32)}</div><div class="detail-name"><h2>${h(sectionTitle(entity))}</h2><p>[${h(entity.id)}] &nbsp; / &nbsp; ${h(labelFor(entity.type))}${entity.originalName && entity.name !== entity.originalName ? ` &nbsp; / &nbsp; ${h(entity.originalName)}` : ''}</p></div><div class="hero-actions">${sec ? quickFeatureButton(entity) + '<button type="button" class="btn sm" data-action="clone-object">复制并新建</button>' : ''}<div class="hero-status">${entity.exists ? '● 已解析' : '○ 未定义'}${state.changedSections.has(lower(entity.id)) ? ' <span class="hero-dirty">· 有修改</span>' : ''}</div></div></div><div class="tabs" role="tablist"><button role="tab" aria-selected="${tab === 'basic'}" class="tab ${tab === 'basic' ? 'active' : ''}" data-tab="basic">基础属性</button><button role="tab" aria-selected="${tab === 'relations'}" class="tab ${tab === 'relations' ? 'active' : ''}" data-tab="relations">关联关系</button><button role="tab" aria-selected="${tab === 'raw'}" class="tab ${tab === 'raw' ? 'active' : ''}" data-tab="raw">全部属性 ${sec ? `<span style="font:10px var(--mono);opacity:.7">${sec.fields.size}</span>` : ''}</button></div></div>${detailBody}`;
 }
 
@@ -536,15 +540,18 @@ function choicesFor(kind, value) {
     if (id && !choices.some(option => lower(option.id) === lower(id))) choices.push({ id, label: id, group: '当前未登记的代码' });
     return choices;
   }
-  if (kind === 'attachtypes') {
-    const registered = new Set(listTypes(state.project, 'AttachEffectTypes').map(lower));
-    const choices = state.entities.filter(item => item.type === 'attachtype').map(item => ({ id: item.id, label: item.name, group: !item.exists ? '未找到定义的附加效果' : registered.has(lower(item.id)) ? '已登记的附加效果' : '未登记的附加效果' }));
+  if (kind === 'attachtypes' || kind === 'shieldtypes') {
+    const type = kind === 'attachtypes' ? 'attachtype' : 'shield';
+    const label = labelFor(type);
+    const registered = new Set(listTypes(state.project, type === 'shield' ? 'ShieldTypes' : 'AttachEffectTypes').map(lower));
+    const choices = state.entities.filter(item => item.type === type).map(item => ({ id: item.id, label: item.name, group: !item.exists ? `未找到定义的${label}` : registered.has(lower(item.id)) ? `已登记的${label}` : `未登记的${label}` }));
     const known = new Set(choices.map(item => lower(item.id)));
     for (const id of value.split(',').map(item => item.trim()).filter(Boolean)) if (!known.has(lower(id))) { choices.push({ id, label: id, group: '当前未登记的代码' }); known.add(lower(id)); }
     return choices;
   }
   if (kind === 'superweapon' || kind === 'superweapons') {
-    const choices = state.entities.filter(item => item.type === 'superweapon').map(item => ({ id: item.id, label: item.name, group: '已注册超级武器' }));
+    const registered = new Set(listTypes(state.project, 'SuperWeaponTypes').map(lower));
+    const choices = state.entities.filter(item => item.type === 'superweapon').map(item => ({ id: item.id, label: item.name, group: !item.exists ? '未找到定义的超级武器' : registered.has(lower(item.id)) ? '已注册超级武器' : '未登记的超级武器' }));
     const known = new Set(choices.map(item => lower(item.id)));
     for (const id of value.split(',').map(item => item.trim()).filter(Boolean)) if (!known.has(lower(id))) {
       choices.push({ id, label: id, group: '当前未登记的代码' });
@@ -568,7 +575,7 @@ function choiceField(entity, key, info, kind, field) {
   }).join('');
   const source = field ? `${sourceName(field.file)}${field.line.patch !== undefined ? ' · 已修改' : ''}` : '未定义 · 可选择添加';
   const control = `<button type="button" class="choice-trigger ${field?.line.patch !== undefined ? 'is-modified' : ''}" data-action="choose-options" data-kind="${kind}" data-key="${h(key)}" aria-label="选择${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}><span class="choice-chips">${chips || '<span class="choice-placeholder">未设置，点击选择</span>'}${values.length > 4 ? `<span class="choice-more">+${values.length - 4}</span>` : ''}</span><span class="choice-arrow">${icon('chevron', 14)}</span></button>`;
-  const reference = kind === 'superweapon' ? fieldReferenceMarkup(entity, key, raw) : '';
+  const reference = kind === 'superweapon' || (entity.type === 'warhead' && lower(key) === 'launchsw') ? fieldReferenceMarkup(entity, key, raw) : '';
   return `<div class="field"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, key)}${reference ? `<div class="value-control">${control}${reference}</div>` : control}<div class="field-source ${field?.line.patch !== undefined ? 'changed' : ''}" title="${h(source)}">${h(source)}</div></div>`;
 }
 
@@ -585,7 +592,9 @@ function referenceType(entity, key) {
   else if (unitTypes.has(actual.type) && /^interceptor\.weaponoverride$/i.test(key)) type = 'weapon';
   else if (actual.type === 'weapon' && /^feedbackweapon$/i.test(key)) type = 'weapon';
   else if (actual.type === 'weapon' && /^radtype$/i.test(key)) type = 'radiation';
+  else if (actual.type === 'warhead' && /^launchsw$/i.test(key)) type = 'superweapon';
   else if (actual.type === 'warhead' && /^crit\.warhead$/i.test(key)) type = 'warhead';
+  else if (actual.type === 'warhead' && /^shield\.breakweapon$/i.test(key)) type = 'weapon';
   else if (actual.type === 'shield' && /^breakweapon$/i.test(key)) type = 'weapon';
   else if (actual.type === 'attachtype' && /^expireweapon$/i.test(key)) type = 'weapon';
   else if (actual.type === 'radiation' && /^radsitewarhead$/i.test(key)) type = 'warhead';
@@ -602,6 +611,11 @@ function fieldReference(entity, key, value) {
   if (!type) return null;
   let id = String(value || '').trim();
   let isDefault = false;
+  if (actual.type === 'warhead' && lower(key) === 'launchsw') {
+    const references = warheadSuperweaponReferences(state.project, actual.id);
+    if (references.length !== 1) return null;
+    id = references[0].id;
+  }
   if (!id && actual.type === 'weapon' && lower(key) === 'ivanbomb.warhead') {
     const reference = weaponWarheadReferences(state.project, actual.id).find(ref => ref.key === 'IvanBomb.Warhead' && ref.source === 'global');
     if (reference) { id = reference.id; isDefault = true; }
@@ -633,6 +647,9 @@ function structuredChoiceMarkup(entity, key) {
   else if (!kind && ((unitTypes.has(actual.type) && /^(owner|requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'superweapon' && /^sw\.(requiredhouses|forbiddenhouses)$/.test(name)) || (actual.type === 'global' && lower(actual.id) === 'sides'))) kind = 'country';
   else if (!kind && unitTypes.has(actual.type) && name === 'prerequisite') kind = 'prerequisite';
   else if (!kind && (unitTypes.has(actual.type) || ['weapon', 'warhead'].includes(actual.type)) && /^attacheffect\.(attachtypes|removetypes|requiredtypes|disallowedtypes)$/.test(name)) kind = 'attachtypes';
+  else if (!kind && actual.type === 'warhead' && name === 'suppressreflectdamage.types') kind = 'attachtypes';
+  else if (!kind && actual.type === 'warhead' && /^shield\.(affecttypes|attachtypes|removetypes|penetrate\.types|break\.types|respawn\.types|selfhealing\.types)$/.test(name)) kind = 'shieldtypes';
+  else if (!kind && actual.type === 'warhead' && name === 'launchsw') kind = 'superweapons';
   else if (!kind && actual.type === 'superweapon' && name === 'sw.next') kind = 'superweapons';
   if (!kind) return '';
   const title = enumDefinition(kind)?.title || `选择${fieldInfoFor(entity, key).label}`;
@@ -657,6 +674,7 @@ function fieldMarkup(entity, key) {
   if ((unitTypes.has(entity.type) && /^(owner|requiredhouses|forbiddenhouses)$/i.test(key)) || (entity.type === 'superweapon' && /^sw\.(requiredhouses|forbiddenhouses)$/i.test(key)) || (entity.type === 'global' && lower(entity.id) === 'sides')) return choiceField(entity, key, info, 'country', field);
   if (unitTypes.has(entity.type) && lower(key) === 'prerequisite') return choiceField(entity, key, info, 'prerequisite', field);
   if ((unitTypes.has(entity.type) || ['weapon', 'warhead'].includes(entity.type)) && /^attacheffect\.(attachtypes|removetypes|requiredtypes|disallowedtypes)$/i.test(key)) return choiceField(entity, key, info, 'attachtypes', field);
+  if (entity.type === 'warhead' && /^launchsw$/i.test(key)) return choiceField(entity, key, info, 'superweapons', field);
   if (entity.type === 'superweapon' && /^sw\.next$/i.test(key)) return choiceField(entity, key, info, 'superweapons', field);
   const source = field ? `${sourceName(field.file)}${field.line.patch !== undefined ? ' · 已修改' : ''}` : '未定义 · 输入后添加';
   const raw = field?.value || '';
@@ -666,9 +684,10 @@ function fieldMarkup(entity, key) {
   }
   let control;
   const projectileBoolean = entity.type === 'projectile' && projectileBooleanFields.has(lower(key)) && (!raw || /^(yes|no|true|false)$/i.test(raw));
-  if ((['global', 'sections', 'superweapon', 'projectile'].includes(entity.type) && /^(yes|no|true|false)$/i.test(raw)) || projectileBoolean || (enumKind === 'boolean' && (!raw || /^(yes|no|true|false)$/i.test(raw)))) {
-    const yesNo = /^(yes|no)$/i.test(raw), positive = yesNo ? 'yes' : 'true', negative = yesNo ? 'no' : 'false';
-    const truthy = /^(yes|true)$/i.test(raw);
+  if ((['global', 'sections', 'superweapon', 'projectile'].includes(entity.type) && /^(yes|no|true|false)$/i.test(raw)) || projectileBoolean || (enumKind === 'boolean' && (!raw || /^(yes|no|true|false|1|0)$/i.test(raw)))) {
+    const numeric = /^(1|0)$/.test(raw), yesNo = /^(yes|no)$/i.test(raw);
+    const positive = numeric ? '1' : yesNo ? 'yes' : 'true', negative = numeric ? '0' : yesNo ? 'no' : 'false';
+    const truthy = /^(yes|true|1)$/i.test(raw);
     const yes = raw ? (truthy ? raw : positive) : 'yes', no = raw ? (truthy ? negative : raw) : 'no';
     const canUnset = !raw || ((projectileBoolean || enumKind === 'boolean') && field?.line.added);
     control = `<select class="${modified}" data-field="${h(key)}" aria-label="${h(label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''}>${canUnset ? `<option value="" ${raw ? '' : 'selected'}>未定义</option>` : ''}<option value="${h(yes)}" ${raw && truthy ? 'selected' : ''}>是</option><option value="${h(no)}" ${raw && !truthy ? 'selected' : ''}>否</option></select>`;
@@ -754,6 +773,10 @@ function renderBasic(entity) {
   if (entity.type === 'projectile') body += `<div class="block-divider"></div><div class="section-head"><div><h3>空爆、分裂与弹片</h3><p>未定义的字段不会自动写入；部分效果需要相应扩展及其他参数配合。</p></div><span class="section-num">02 / EFFECTS</span></div><div class="field-grid">${projectileEffects.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (entity.type === 'superweapon') body += `<div class="block-divider"></div><div class="section-head"><div><h3>效果与限制</h3><p>未定义的值由游戏或武器类型决定；不同类型支持的参数可能不同。</p></div><span class="section-num">02 / EFFECTS</span></div><div class="field-grid">${superweaponEffects.map(key => fieldMarkup(entity, key)).join('')}</div>`;
   if (entity.type === 'warhead') {
+    const launchFields = ['LaunchSW', 'LaunchSW.RealLaunch', 'LaunchSW.IgnoreInhibitors', 'LaunchSW.IgnoreDesignators', 'LaunchSW.DisplayMoney', 'LaunchSW.DisplayMoney.Houses', 'LaunchSW.DisplayMoney.Offset'];
+    if (launchFields.some(key => state.project.get(entity.id, key))) {
+      body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 弹头触发超级武器</h3><p>弹头引爆时在目标位置触发所选超级武器；实际效果受超武类型和所属方条件影响。</p></div></div><div class="field-grid">${launchFields.map(key => fieldMarkup(entity, key)).join('')}</div>`;
+    }
     body += `<div class="block-divider"></div><div class="section-head"><div><h3>Phobos 暴击、护盾与附加效果</h3><p>弹头可能被多个武器共用，修改会影响所有引用者。</p></div></div><div class="field-grid">${['Crit.Chance', 'Crit.ExtraDamage', 'Crit.Warhead', 'Crit.ApplyChancePerTarget', 'Crit.Affects', 'Crit.AffectsHouses', 'Shield.Penetrate', 'Shield.Break', 'AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes'].map(key => fieldMarkup(entity, key)).join('')}</div>`;
     body += `<div class="block-divider"></div>${renderVerses(entity)}`;
   }
@@ -782,6 +805,11 @@ function superweaponsReferencing(id, keys) {
     superweapon, keys: keys.filter(key => lower(val(superweapon.id, key).trim()) === lower(id)),
   })).filter(item => item.keys.length);
 }
+function warheadsTriggeringSuperweapon(id) {
+  return state.entities.filter(item => item.type === 'warhead').map(warhead => ({
+    warhead, refs: warheadSuperweaponReferences(state.project, warhead.id).filter(ref => lower(ref.id) === lower(id)),
+  })).filter(item => item.refs.length);
+}
 function phobosUsers(entity) {
   if (entity.type === 'lasertrail') {
     const users = [];
@@ -791,14 +819,18 @@ function phobosUsers(entity) {
     }
     return users;
   }
-  const fields = entity.type === 'shield' ? ['ShieldType'] : entity.type === 'attachtype'
-    ? ['AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes', 'AttachEffect.RequiredTypes', 'AttachEffect.DisallowedTypes']
+  const fields = entity.type === 'shield' ? ['ShieldType', 'Shield.AffectTypes', 'Shield.Penetrate.Types', 'Shield.Break.Types', 'Shield.Respawn.Types', 'Shield.SelfHealing.Types', 'Shield.AttachTypes', 'Shield.RemoveTypes'] : entity.type === 'attachtype'
+    ? ['AttachEffect.AttachTypes', 'AttachEffect.RemoveTypes', 'AttachEffect.RequiredTypes', 'AttachEffect.DisallowedTypes', 'SuppressReflectDamage.Types']
     : entity.type === 'radiation' ? ['RadType'] : [];
   return state.entities.filter(item => item.type !== 'sections' && item.type !== 'global' && item.id !== entity.id).flatMap(item => fields
     .filter(key => val(item.id, key).split(',').some(value => lower(value.trim()) === lower(entity.id)))
     .map(key => ({ entity: item, key })));
 }
 function usageMarkup(entity) {
+  if (entity.type === 'superweapon') {
+    const warheads = warheadsTriggeringSuperweapon(entity.id);
+    return warheads.length ? `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${warheads.length} 个弹头通过 LaunchSW 触发此超级武器</strong><p>修改此配置可能影响这些弹头及其他提供者。</p></div><button type="button" class="text-action" data-action="show-referrers">查看引用</button></div>` : '';
+  }
   if (['shield', 'attachtype', 'radiation', 'lasertrail'].includes(entity.type)) {
     const users = phobosUsers(entity);
     return `<div class="usage-notice">${icon('info', 15)}<div><strong>已识别 ${users.length} 处引用</strong><p>修改此定义可能影响所有使用者；未加载的规则可能未列出。</p></div>${users.length ? '<button type="button" class="text-action" data-action="show-referrers">查看引用</button>' : ''}</div>`;
@@ -853,20 +885,25 @@ function renderRelations(entity) {
     description = `根据已加载的规则，发现 ${weapons.length} 个武器和 ${supers.length} 个超级武器引用此弹头；包括直接命中弹头和炸弹弹头。`;
     const crit = val(entity.id, 'Crit.Warhead');
     if (crit && !/^(?:none|<none>)$/i.test(crit)) items += refMarkup('', crit, 'warhead', { entity, key: 'Crit.Warhead' });
-    items += (weapons.length || supers.length || critParents.length ? '<div class="section-head" data-ref-users><div><h3>引用此弹头的对象</h3></div></div>' : '') + (weapons.map(({ weapon, refs }) => {
+    for (const ref of warheadSuperweaponReferences(state.project, entity.id)) items += refMarkup('', ref.id, 'superweapon', { entity, key: ref.key, note: `第 ${ref.index + 1} 个触发的超级武器` });
+    const incoming = weapons.map(({ weapon, refs }) => {
       const roles = refs.map(ref => `${fieldInfoFor(weapon, ref.key).label}${ref.source === 'global' ? '（全局默认）' : ''}`).join('、');
       return refMarkup(`武器 · ${roles}`, weapon.id, 'weapon');
-    }).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('') + critParents.map(parent => refMarkup('弹头 · Crit.Warhead', parent.id, 'warhead')).join('') || '<p class="ref-note">当前没有发现关联对象。</p>');
+    }).join('') + supers.map(({ superweapon, keys }) => refMarkup(`超级武器 · ${keys.join('、')}`, superweapon.id, 'superweapon')).join('') + critParents.map(parent => refMarkup('弹头 · Crit.Warhead', parent.id, 'warhead')).join('');
+    if (incoming) items += '<div class="section-head" data-ref-users><div><h3>引用此弹头的对象</h3></div></div>' + incoming;
+    if (!items) items = '<p class="ref-note">当前没有发现关联对象。</p>';
   } else if (['shield', 'attachtype', 'radiation', 'lasertrail'].includes(entity.type)) {
     const users = phobosUsers(entity);
     description = `发现 ${users.length} 处已加载的引用；修改此定义会影响这些对象。`;
     items = users.length ? '<div class="section-head" data-ref-users><div><h3>引用此对象的规则</h3></div></div>' + users.map(user => refMarkup(`${labelFor(user.entity.type)} · ${user.key}`, user.entity.id, user.entity.type)).join('') : '<p class="ref-note">当前没有发现引用。</p>';
   } else if (entity.type === 'superweapon') {
     const providers = state.entities.filter(item => unitTypes.has(item.type) && grantedSuperweapons(item).some(ref => lower(ref.id) === lower(entity.id)));
-    description = `根据已加载对象的 SuperWeapon、SuperWeapon2 和 SuperWeapons 字段，发现 ${providers.length} 个提供对象；其他规则也可能影响可用性。`;
+    const warheads = warheadsTriggeringSuperweapon(entity.id);
+    description = `发现 ${providers.length} 个提供对象和 ${warheads.length} 个通过 LaunchSW 触发的弹头；其他规则也可能影响可用性。`;
     const linked = [['SW.Warhead', '效果弹头', 'warhead'], ['WeaponType', '发射武器', 'weapon'], ['Nuke.Payload', '载荷武器', 'weapon'], ['Detonate.Warhead', '引爆弹头', 'warhead'], ['Detonate.Weapon', '引爆武器', 'weapon']];
     items = linked.filter(([key]) => val(entity.id, key) && !/^(?:none|<none>)$/i.test(val(entity.id, key))).map(([key, label, type]) => refMarkup(label, val(entity.id, key), type, { entity, key })).join('');
     for (const [index, id] of val(entity.id, 'SW.Next').split(',').map(value => value.trim()).filter(Boolean).entries()) items += refMarkup('', id, 'superweapon', { entity, key: 'SW.Next', note: `第 ${index + 1} 个后续超级武器` });
+    if (warheads.length) items += '<div class="section-head" data-ref-users><div><h3>触发此超级武器的弹头</h3></div></div>' + warheads.map(({ warhead }) => refMarkup('弹头 · LaunchSW', warhead.id, 'warhead')).join('');
     if (providers.length) items += providers.map(provider => refMarkup(`提供对象 · ${provider.name}`, provider.id, provider.type)).join('');
     if (!items) items = '<p class="ref-note">当前没有发现直接关联的对象。</p>';
   } else {
@@ -2058,9 +2095,9 @@ function openChoices(kind, key) {
   const values = single ? (raw ? [raw] : []) : raw.split(',').map(value => value.trim()).filter(Boolean);
   const selected = new Map(values.map(value => [lower(value), value]));
   const options = choicesFor(kind, raw);
-  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', shield: '选择护盾', attachtype: '选择附加效果', radiation: '选择辐射类型', lasertrail: '选择激光尾迹', superweapon: '选择超级武器', superweapons: '选择超级武器' };
+  const labels = { country: '选择所属国家', side: '选择所属阵营', armor: '选择装甲类型', prerequisite: '选择建造前置', weapon: '选择武器', warhead: '选择弹头', projectile: '选择投射物', shield: '选择护盾', shieldtypes: '选择护盾类型', attachtype: '选择附加效果', attachtypes: '选择附加效果类型', radiation: '选择辐射类型', lasertrail: '选择激光尾迹', superweapon: '选择超级武器', superweapons: '选择超级武器' };
   const title = definition?.title || labels[kind] || '选择规则项';
-  const description = definition ? (definition.description || '可搜索中文或规则代码；当前未识别的值会保留。') : kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile', 'shield', 'attachtype', 'attachtypes', 'radiation', 'lasertrail'].includes(kind) ? `可搜索已加载的${labelFor(kind === 'attachtypes' ? 'attachtype' : kind)}；未登记或未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
+  const description = definition ? (definition.description || '可搜索中文或规则代码；当前未识别的值会保留。') : kind === 'armor' ? '可搜索基础装甲和当前规则定义的扩展装甲。' : kind === 'country' ? '按阵营选择国家；当前未登记的代码也会保留。' : kind === 'side' ? '选择当前规则中注册的阵营。' : ['weapon', 'warhead', 'projectile', 'shield', 'shieldtypes', 'attachtype', 'attachtypes', 'radiation', 'lasertrail'].includes(kind) ? `可搜索已加载的${labelFor(kind === 'attachtypes' ? 'attachtype' : kind === 'shieldtypes' ? 'shield' : kind)}；未登记或未找到定义的代码会单独标识。` : kind.startsWith('superweapon') ? '选择当前规则中注册的超级武器；当前未登记的代码也会保留。' : '选择建筑或通用建造条件，实际限制还可能由其他参数决定。';
   editorDialog.innerHTML = `<div class="dialog-head"><h2 id="editor-title">${h(title)}</h2><button type="button" data-editor-close aria-label="关闭">×</button></div><div class="dialog-body option-dialog-body"><p>${h(description)}</p><div class="search-wrap">${icon('search', 15)}<input class="search" id="choice-search" type="search" placeholder="搜索中文、英文或代码..." aria-label="搜索选项"></div><div class="option-toolbar"><span data-selected-count></span>${single ? '<button type="button" class="text-action" data-clear-selection>清空选择</button>' : ''}</div><div class="option-list" data-option-list></div></div><div class="dialog-actions"><button type="button" class="btn plain" data-editor-close>取消</button><button type="button" class="btn primary" data-editor-apply>应用选择</button></div>`;
   const search = editorDialog.querySelector('#choice-search');
   const list = editorDialog.querySelector('[data-option-list]');
