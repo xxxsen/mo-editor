@@ -461,7 +461,7 @@ function renderDetail(entity) {
 }
 
 const unitBasic = ['Strength', 'Cost', 'Speed', 'Sight', 'Armor', 'TechLevel'];
-const unitAdvanced = ['Owner', 'Prerequisite', 'Primary', 'Secondary'];
+const unitAdvanced = ['Owner', 'Prerequisite', 'Primary', 'Secondary', 'ElitePrimary', 'EliteSecondary'];
 const weaponBasic = ['Damage', 'ROF', 'Range', 'Burst', 'Projectile', 'Warhead'];
 const projectileBasic = ['Image', 'Inviso', 'AA', 'AG', 'Arcing', 'ROT', 'Inaccurate', 'Proximity', 'SubjectToCliffs', 'SubjectToElevation', 'SubjectToWalls', 'SubjectToBuildings'];
 const projectileEffects = ['Airburst', 'AirburstWeapon', 'Cluster', 'AirburstSpread', 'Splits', 'AroundTarget', 'RetargetAccuracy', 'RetargetSelf', 'ShrapnelWeapon', 'ShrapnelCount', 'Ranged', 'BallisticScatter.Min', 'BallisticScatter.Max'];

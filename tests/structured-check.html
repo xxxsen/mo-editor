@@ -11,7 +11,7 @@ frame.addEventListener('load', async () => {
   const w = frame.contentWindow, d = frame.contentDocument;
   await delay(80);
   const extra = Array.from({length:150}, (_, i) => `Setting${i}=value${i}\n`).join('');
-  const rules = `[General]\nName=Example Rules\nBuildSpeed=.6\nTiberiumGrows=yes\n${extra}[Sides]\nGDI=A,B\nNod=C\n[Countries]\n0=A\n1=B\n2=C\n[A]\nName=Alpha Country\nSide=GDI\n[B]\nName=Beta Country\nSide=GDI\n[C]\nName=Gamma Country\nSide=Nod\n[ArmorTypes]\nshielded=heavy\n[GenericPrerequisites]\nALLWEAP=FACTORY\n[VehicleTypes]\n0=TESTUNIT\n[BuildingTypes]\n0=FACTORY\n[Warheads]\n0=TESTWH\n[TESTUNIT]\nName=Test Unit\nStrength=300\nArmor=shielded\nOwner=A, Mystery,B\nPrerequisite=ALLWEAP,UNKNOWNBUILD\nPrimary=TESTGUN\n[FACTORY]\nName=Factory\n[TESTGUN]\nDamage=50\nWarhead=TESTWH\n[TESTWH]\nVerses=20%, 30%,40%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve\nVersus.shielded=70%\n`;
+  const rules = `[General]\nName=Example Rules\nBuildSpeed=.6\nTiberiumGrows=yes\n${extra}[Sides]\nGDI=A,B\nNod=C\n[Countries]\n0=A\n1=B\n2=C\n[A]\nName=Alpha Country\nSide=GDI\n[B]\nName=Beta Country\nSide=GDI\n[C]\nName=Gamma Country\nSide=Nod\n[ArmorTypes]\nshielded=heavy\n[GenericPrerequisites]\nALLWEAP=FACTORY\n[VehicleTypes]\n0=TESTUNIT\n[BuildingTypes]\n0=FACTORY\n[Warheads]\n0=TESTWH\n[TESTUNIT]\nName=Test Unit\nStrength=300\nArmor=shielded\nOwner=A, Mystery,B\nPrerequisite=ALLWEAP,UNKNOWNBUILD\nPrimary=TESTGUN\nElitePrimary=TESTGUN\n[FACTORY]\nName=Factory\n[TESTGUN]\nDamage=50\nWarhead=TESTWH\n[TESTWH]\nVerses=20%, 30%,40%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve\nVersus.shielded=70%\n`;
   const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
   const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change',{bubbles:true}));
   for (let i=0; i<200 && d.querySelector('.detail-name h2')?.textContent !== 'Test Unit'; i++) await delay(10);
@@ -45,6 +45,13 @@ frame.addEventListener('load', async () => {
   check(d.querySelector('[data-field="ExtraGlobal"]')?.value === '42', 'global custom field was not added');
   d.querySelector('[data-category="all"]').click(); d.querySelector('[data-entity="TESTUNIT"][data-type="vehicle"]').click();
   check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'workspace height changed after selection');
+  check(d.querySelector('[data-field="ElitePrimary"]')?.value === 'TESTGUN' && d.querySelector('[data-jump-field="ElitePrimary"]'), 'configured elite primary or its link missing from basic view');
+  check(d.querySelector('[data-field="EliteSecondary"]')?.value === '', 'unset elite secondary missing from basic view');
+  d.querySelector('[data-action="choose-options"][data-kind="weapon"][data-key="EliteSecondary"]').click();
+  let weaponDialog=d.querySelector('#editor-dialog'), weaponChoice=weaponDialog.querySelector('[data-choice="TESTGUN"]');
+  check(weaponChoice, 'elite secondary weapon chooser did not list the weapon');
+  weaponChoice.checked=true; weaponChoice.dispatchEvent(new w.Event('change',{bubbles:true})); weaponDialog.querySelector('[data-editor-apply]').click(); await delay(40);
+  check(d.querySelector('[data-field="EliteSecondary"]')?.value === 'TESTGUN' && d.querySelector('[data-field="Primary"]')?.value === 'TESTGUN', 'elite secondary selection changed the wrong weapon slot');
   d.querySelector('[data-action="choose-options"][data-key="Owner"]').click();
   let dialog=d.querySelector('#editor-dialog'); check(dialog.open, 'country chooser did not open');
   check(dialog.querySelector('[data-choice="A"]').checked && dialog.querySelector('[data-choice="Mystery"]').checked, 'owner choices did not include existing unknown');
@@ -93,7 +100,7 @@ frame.addEventListener('load', async () => {
   let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
   d.querySelector('[data-export="0"]').click();
   const exported = await output.text();
-  for (const text of ['ExtraGlobal=42', 'TiberiumGrows=no', 'Setting149=edited', 'Owner=A, Mystery,C', 'Armor=light', 'Prerequisite=ALLWEAP,UNKNOWNBUILD,FACTORY', 'Verses=20%, 45%,41%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve', 'Versus.shielded=80%']) {
+  for (const text of ['ExtraGlobal=42', 'TiberiumGrows=no', 'Setting149=edited', 'Owner=A, Mystery,C', 'Armor=light', 'Prerequisite=ALLWEAP,UNKNOWNBUILD,FACTORY', 'EliteSecondary=TESTGUN', 'Verses=20%, 45%,41%,50%,60%,70%,80%,90%,100%,110%,120%,444% ; preserve', 'Versus.shielded=80%']) {
     check(exported.includes(text), `export omitted ${text}`);
   }
   check(Math.abs(d.querySelector('.workspace').getBoundingClientRect().height - workspaceHeight) < 1, 'workspace grew with armor content');
