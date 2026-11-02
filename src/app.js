@@ -58,6 +58,7 @@ const icons = {
 function icon(name, size = 16) { return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.all}</svg>`; }
 const h = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const lower = value => String(value ?? '').toLowerCase();
+const fieldNameOrder = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
 const unique = values => [...new Map(values.map(value => [lower(value), value])).values()];
 const val = (section, key) => state.project.get(section, key)?.value || '';
 const sourceName = file => file.sourceArchive ? `${file.sourceArchive} → ${file.path}` : file.path;
@@ -799,8 +800,9 @@ function renderRelations(entity) {
   return `<div class="detail-body"><div class="section-head"><div><h3>关联关系</h3><p>${h(description)}</p></div><span class="section-num">REFERENCES</span></div><div class="refs">${items}</div></div>`;
 }
 function renderRaw(entity) {
-  const fields = [...state.project.section(entity.id).fields.values(), ...pendingFields(entity.id).map(name => ({ name, value: '', pending: true }))];
-  return `<div class="detail-body">${usageMarkup(entity)}${analysisActions(entity)}<div class="section-head"><div><h3>全部已解析属性</h3><p>未知字段同样保留；只会修改你编辑的值。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
+  const fields = [...state.project.section(entity.id).fields.values(), ...pendingFields(entity.id).map(name => ({ name, value: '', pending: true }))]
+    .sort((a, b) => fieldNameOrder.compare(a.name, b.name));
+  return `<div class="detail-body">${usageMarkup(entity)}${analysisActions(entity)}<div class="section-head"><div><h3>全部已解析属性</h3><p>按规则字段名字母排序；未知字段同样保留。</p></div><button type="button" class="btn sm" data-action="add-field">＋ 添加字段</button></div><div class="raw-list">${fields.map(field => {
     const info = fieldInfoFor(entity, field.name);
     return `<div class="raw-row"${info.description ? ` title="${h(info.description)}"` : ''}>${fieldNameMarkup(info, field.name, 'raw-key', field.pending ? '未配置，填写后加入待保存修改' : `来源：${sourceName(field.file)}`)}<div class="value-control"><input class="${field.line?.patch !== undefined ? 'is-modified' : ''}" data-field="${h(field.name)}" aria-label="${h(info.label)}"${info.description ? ` aria-description="${h(info.description)}"` : ''} value="${h(field.value)}" ${field.pending ? 'placeholder="未配置"' : ''} autocomplete="off" spellcheck="false">${structuredChoiceMarkup(entity, field.name)}${referenceChoiceMarkup(entity, field.name)}${fieldReferenceMarkup(entity, field.name, field.value)}${field.value.includes(',') ? `<button type="button" class="split-button" data-action="edit-list" data-key="${h(field.name)}" aria-label="分项编辑 ${h(info.label)}">分项</button>` : ''}${field.pending ? `<button type="button" class="split-button" data-action="remove-pending-field" data-key="${h(field.name)}" aria-label="移除未设置的 ${h(info.label)}">移除</button>` : ''}</div></div>`;
   }).join('')}</div></div>`;

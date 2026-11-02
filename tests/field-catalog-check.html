@@ -9,7 +9,7 @@ async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if 
 frame.addEventListener('load', async () => {
  try {
   const w = frame.contentWindow, d = frame.contentDocument;
-  const rules = `[General]\nName=Fixture\n[Countries]\n0=USA\n[USA]\nName=测试国家\n[InfantryTypes]\n0=UNIT\n1=OTHER\n[Projectiles]\n0=PROJ\n[Warheads]\n0=WH\n[ArmorTypes]\nshielded=heavy\n[UNIT]\nName=测试步兵\nStrength=100 ; keep\n[OTHER]\nName=其他步兵\nImmuneToEMP=no\nCustom.UnitFlag=yes\n[PROJ]\nInviso=yes\n[WH]\nVerses=100%\n`;
+  const rules = `[General]\nName=Fixture\n[Countries]\n0=USA\n[USA]\nName=测试国家\n[InfantryTypes]\n0=UNIT\n1=OTHER\n[Projectiles]\n0=PROJ\n[Warheads]\n0=WH\n[ArmorTypes]\nshielded=heavy\n[UNIT]\nZuluFlag=yes\nMode10=10\nmode2=2\nAlpha=1\nName=测试步兵\nStrength=100 ; keep\n[OTHER]\nName=其他步兵\nImmuneToEMP=no\nCustom.UnitFlag=yes\n[PROJ]\nInviso=yes\n[WH]\nVerses=100%\n`;
   await waitFor(() => d.querySelector('.detail-name'), 'editor did not start');
   const transfer = new w.DataTransfer(); transfer.items.add(new w.File([rules], 'rulesmo.ini'));
   const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
@@ -18,7 +18,9 @@ frame.addEventListener('load', async () => {
   const add = () => { d.querySelector('[data-action="add-field"]').click(); return d.querySelector('#editor-dialog'); };
   const search = (dialog, value) => { const input = dialog.querySelector('#new-field-search'); input.value = value; input.dispatchEvent(new w.Event('input', { bubbles: true })); };
   const candidate = (dialog, key) => { const item = dialog.querySelector(`[data-field-candidate="${key}"]`); check(item, `missing candidate ${key}`); item.click(); };
+  const rawFields = () => [...d.querySelectorAll('.raw-row [data-field]')].map(input => input.dataset.field);
   d.querySelector('[data-tab="raw"]').click();
+  check(rawFields().join(',') === 'Alpha,mode2,Mode10,Name,Strength,ZuluFlag', 'raw fields are not sorted by rule name and numeric suffix');
   let dialog = add();
   const searchInput = dialog.querySelector('#new-field-search');
   searchInput.dispatchEvent(new w.CompositionEvent('compositionstart', { bubbles: true, data: 'mian' }));
@@ -30,6 +32,7 @@ frame.addEventListener('load', async () => {
   check(dialog.querySelector('[data-field-info]').textContent.includes('免疫 EMP'), 'selected field description missing');
   dialog.querySelector('[data-editor-apply]').click(); await delay(40);
   check(d.querySelector('[data-field="ImmuneToEMP"]')?.value === '' && count() === 0, 'empty pending field changed the project');
+  check(rawFields().join(',') === 'Alpha,ImmuneToEMP,mode2,Mode10,Name,Strength,ZuluFlag', 'pending field was not placed in alphabetical order');
   check(d.querySelector('[data-action="choose-options"][data-key="ImmuneToEMP"]'), 'pending field has no structured editor');
   d.querySelector('[data-category="infantry"]').click(); d.querySelector('[data-entity="OTHER"][data-type="infantry"]').click();
   d.querySelector('[data-entity="UNIT"][data-type="infantry"]').click(); d.querySelector('[data-tab="raw"]').click();
@@ -85,6 +88,9 @@ frame.addEventListener('load', async () => {
   let output; w.URL.createObjectURL = blob => { output = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
   d.querySelector('#changes-dialog [data-export]').click(); const saved = await output.text();
   for (const text of ['Strength=100 ; keep', 'Owner=USA', 'Armor=heavy', 'Custom.UnitFlag=no', 'My.Custom.Field=42', 'Arcing=yes', 'BuildSpeed=.75', 'Cloakable=yes']) check(saved.includes(text), `export lost ${text}`);
+  const unitSource = saved.slice(saved.indexOf('[UNIT]'), saved.indexOf('[OTHER]'));
+  const originalFields = ['ZuluFlag=yes', 'Mode10=10', 'mode2=2', 'Alpha=1', 'Name=测试步兵', 'Strength=100 ; keep'];
+  check(originalFields.every((field, index) => unitSource.includes(field) && (!index || unitSource.indexOf(originalFields[index - 1]) < unitSource.indexOf(field))), 'display sorting reordered original INI fields');
   check(!saved.includes('ImmuneToEMP=' + 'yes'), 'removed pending value was written');
   result.textContent = 'PASS: searchable missing fields, empty drafts, typed choices, same-type suggestions, custom fields and export';
  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
