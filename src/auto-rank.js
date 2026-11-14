@@ -5,6 +5,10 @@ import { IniProject, listTypes } from './ini.js';
 const PROFILE = 'MRARankProfiles', SHARED = 'MRARankShared', GROUP = 'MRARankGroup';
 const VETERAN = 'MRARankVet', ELITE = 'MRARankElite', STOP_WEAPON = 'MRARankStopW', STOP_WARHEAD = 'MRARankStopH';
 const SEQUENCE = 'MRARankSeq', SPRITE = 'INVISOX';
+// The helper stays on the ground; Ares' Psychic Dominator skips BalloonHover
+// even when capturing psionic-immune units. NotHuman also lets configured
+// genetic mutators skip the helper.
+const HELPER_PROTECTION = { ImmuneToPsionics: 'yes', BalloonHover: 'yes', NotHuman: 'yes' };
 const ZERO = '0%,0%,0%,0%,0%,0%,0%,0%,0%,0%,0%';
 const TYPE_LISTS = { infantry: 'InfantryTypes', vehicle: 'VehicleTypes', aircraft: 'AircraftTypes', building: 'BuildingTypes' };
 const ARRAYS = [
@@ -283,7 +287,7 @@ export function autoRankStatus(project, section) {
 }
 function addProfile(project, art, section, prefix, interval, costs) {
   const n = namesFor(prefix);
-  const helper = { UIName: `NOSTR:Auto Rank Helper for ${section}`, Name: `Auto Rank Helper for ${section}`, Image: SPRITE, Category: 'Soldier', Strength: '1', Armor: n.Armor, TechLevel: '-1', Sight: '0', Speed: '0', Owner: 'Neutral', Cost: costs.helperCost, Soylent: '0', Points: '0', ThreatPosed: '0', Locomotor: '{4A582744-9839-11d1-B709-00A024DDAFD1}', MovementZone: 'Infantry', PhysicalSize: '1', Size: '1', Fearless: 'yes', Crushable: 'no', Selectable: 'no', LegalTarget: 'no', Trainable: 'no', Insignificant: 'no', DontScore: 'no', Bounty: 'no', 'AutoDeath.Behavior': 'vanish', 'AutoDeath.AfterDelay': '90', AllowedToStartInMultiplayer: 'no' };
+  const helper = { UIName: `NOSTR:Auto Rank Helper for ${section}`, Name: `Auto Rank Helper for ${section}`, Image: SPRITE, Category: 'Soldier', Strength: '1', Armor: n.Armor, TechLevel: '-1', Sight: '0', Speed: '0', Owner: 'Neutral', Cost: costs.helperCost, Soylent: '0', Points: '0', ThreatPosed: '0', Locomotor: '{4A582744-9839-11d1-B709-00A024DDAFD1}', MovementZone: 'Infantry', PhysicalSize: '1', Size: '1', Fearless: 'yes', Crushable: 'no', Selectable: 'no', LegalTarget: 'no', ...HELPER_PROTECTION, Trainable: 'no', Insignificant: 'no', DontScore: 'no', Bounty: 'no', 'AutoDeath.Behavior': 'vanish', 'AutoDeath.AfterDelay': '90', AllowedToStartInMultiplayer: 'no' };
   const defs = [
     [n.Meta, { Target: section, Enabled: 'yes', Interval: interval, Cost: costs.cost, VeteranRatio: costs.ratio }],
     [n.First, { Duration: interval, ExpireWeapon: n.SpawnW, 'ExpireWeapon.TriggerOn': 'expire', Groups: GROUP }],
@@ -367,6 +371,7 @@ export function prepareAutoRank(project, { type, section, action = 'enable', int
       if (indexes.some(index => index < 0) || existing.types.filter(id => equal(id, names.First) || equal(id, names.Second)).length !== 2 || existing.arrays.some(entry => indexes.some(i => (entry.items[i] ?? entry.items.at(-1) ?? entry.fallback) !== entry.own))) throw new Error('此对象的自动升星附加效果已被修改，请先检查。');
     }
     for (const [id, key, next] of [[names.First, 'Duration', frames], [names.Second, 'Duration', frames * 2], [names.Helper, 'Cost', costs.helperCost], [names.Meta, 'Interval', frames], [names.Meta, 'Cost', costs.cost], [names.Meta, 'VeteranRatio', costs.ratio], [names.Meta, 'Enabled', 'yes']]) candidate.set(id, key, String(next));
+    for (const [key, next] of Object.entries(HELPER_PROTECTION)) candidate.set(names.Helper, key, next);
   } else {
     const prefix = nextPrefix(candidate, art);
     names = addProfile(candidate, art, section, prefix, frames, costs);

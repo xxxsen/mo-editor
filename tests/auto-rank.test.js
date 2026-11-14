@@ -45,6 +45,9 @@ test('preview atomically creates two timers, per-type helper and art without cha
   assert.equal(val(q, n.First, 'ExpireWeapon.TriggerOn'), 'expire');
   assert.equal(val(q, n.Helper, 'Cost'), '4725');
   assert.equal(val(q, n.Helper, 'Armor'), n.Armor);
+  assert.equal(val(q, n.Helper, 'ImmuneToPsionics'), 'yes');
+  assert.equal(val(q, n.Helper, 'BalloonHover'), 'yes');
+  assert.equal(val(q, n.Helper, 'NotHuman'), 'yes');
   assert.equal(val(q, n.KillH, `Versus.${n.Armor}`), '100%');
   assert.equal(val(q, 'AudioVisual', 'Promote.EliteAnimation'), 'MRARankElite');
   const art = new IniProject(q.files, 'artmo.ini');
@@ -59,6 +62,18 @@ test('preview atomically creates two timers, per-type helper and art without cha
   const reloaded = new IniProject(q.files.map(f => parseFile(f.name, serialize(f), f.path)), 'rulesmo.ini');
   assert.equal(autoRankStatus(reloaded, 'TANK').enabled, true);
   assert.deepEqual(autoRankDrift(reloaded), []);
+});
+
+test('updating an older auto-rank profile previews protections for its neutral helper', () => {
+  const original = prepareAutoRank(fixture(), options()).project;
+  const helper = autoRankStatus(original, 'TANK').names.Helper;
+  for (const key of ['ImmuneToPsionics', 'BalloonHover', 'NotHuman']) original.remove(helper, key);
+  const result = prepareAutoRank(original, options());
+  for (const key of ['ImmuneToPsionics', 'BalloonHover', 'NotHuman']) {
+    assert.equal(val(original, helper, key), undefined);
+    assert.equal(val(result.project, helper, key), 'yes');
+    assert.ok(result.changes.some(change => change.section === helper && change.key === key && change.after === 'yes'));
+  }
 });
 
 test('two types get separate armor, and edits to cost and ratio must be recalculated', () => {
