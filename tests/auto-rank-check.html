@@ -2,6 +2,7 @@
 <body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
 <script>
 const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+if (location.search.includes('mobile')) { frame.width = '480'; frame.height = '640'; }
 const check = (condition, message) => { if (!condition) throw new Error(message); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
@@ -23,16 +24,36 @@ frame.addEventListener('load', async () => {
   }
   let dialog = open();
   check(dialog.textContent.includes('进入载具') && dialog.querySelector('[data-rank-interval]').value === '300', 'form or default interval missing');
-  dialog.querySelector('[data-rank-interval]').value = '0'; dialog.querySelector('[data-quick-next]').click();
+  const mode = dialog.querySelector('[data-rank-mode]'), speed = dialog.querySelector('[data-rank-speed]');
+  const interval = dialog.querySelector('[data-rank-interval]'), fps = dialog.querySelector('[data-rank-fps]');
+  const time = () => dialog.querySelector('[data-rank-estimate]').textContent;
+  const change = element => element.dispatchEvent(new w.Event('change', { bubbles: true }));
+  const inputEvent = element => element.dispatchEvent(new w.Event('input', { bubbles: true }));
+  check(mode.value === 'skirmish' && speed.value === '5' && time().includes('约 5 秒') && time().includes('约 10 秒'), 'default skirmish estimate incorrect');
+  check(dialog.textContent.includes('不会修改游戏设置'), 'estimate-only hint missing');
+  mode.value = 'multiplayer'; change(mode);
+  check(time().includes('约 6.7 秒') && time().includes('约 13.3 秒') && speed.selectedOptions[0].textContent.includes('45'), 'multiplayer speed was not recalculated');
+  speed.value = '6'; change(speed); check(time().includes('约 5 秒'), 'multiplayer speed 6 incorrect');
+  mode.value = 'skirmish'; change(mode); check(time().includes('没有固定上限'), 'unlimited skirmish incorrectly used a fixed rate');
+  fps.value = '24'; inputEvent(fps); check(time().includes('约 12.5 秒') && time().includes('约 25 秒'), 'custom logic rate not applied');
+  interval.value = '600'; inputEvent(interval); check(time().includes('约 25 秒') && time().includes('约 50 秒'), 'frame input did not update both estimates');
+  fps.value = '0'; inputEvent(fps); check(time().includes('无法估算'), 'invalid custom rate produced a time');
+  fps.value = ''; inputEvent(fps); mode.value = 'multiplayer'; change(mode); speed.value = '5'; change(speed);
+  const bounds = dialog.getBoundingClientRect(); check(bounds.top >= 0 && bounds.bottom <= w.innerHeight, 'dialog exceeds viewport');
+  check(count() === 0, 'estimate controls modified the draft');
+  interval.value = '0'; inputEvent(interval); dialog.querySelector('[data-quick-next]').click();
   await waitFor(() => dialog.querySelector('[role="alert"]'), 'invalid interval not rejected');
   check(count() === 0, 'invalid preview modified draft');
-  dialog.querySelector('[data-rank-interval]').value = '500'; dialog.querySelector('[data-quick-next]').click();
+  interval.value = '500'; inputEvent(interval); dialog.querySelector('[data-quick-next]').click();
   await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'preview missing');
   check(dialog.textContent.includes('MRA1Helper') && dialog.textContent.includes('artmo.ini') && dialog.textContent.includes('规则段'), 'generated definitions or art are missing from preview');
+  check(dialog.querySelector('[data-rank-preview-estimate]')?.textContent.includes('约 11.1 秒'), 'preview omitted selected speed estimate');
   check(dialog.textContent.includes('造价') && dialog.textContent.includes('Phobos'), 'limitations not displayed');
   check(count() === 0, 'preview modified draft');
   dialog.querySelector('[data-quick-back]').click();
-  check(dialog.querySelector('[data-rank-interval]').value === '500', 'return lost interval');
+  check(dialog.querySelector('[data-rank-interval]').value === '500' && mode.value === 'multiplayer' && speed.value === '5', 'return lost form values');
+  const featureSelect = dialog.querySelector('#quick-feature-type'); featureSelect.value = 'transport'; change(featureSelect); featureSelect.value = 'auto-rank'; change(featureSelect);
+  check(dialog.querySelector('[data-rank-mode]').value === 'multiplayer' && dialog.querySelector('[data-rank-estimate]').textContent.includes('约 11.1 秒'), 'switching features lost timing settings');
   dialog.querySelector('[data-quick-next]').click(); await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'second preview missing');
   dialog.querySelector('[data-editor-close]').click(); check(count() === 0, 'cancel changed draft');
   dialog = open(); dialog.querySelector('[data-rank-interval]').value = '500'; dialog.querySelector('[data-quick-next]').click();
@@ -40,13 +61,20 @@ frame.addEventListener('load', async () => {
   dialog.querySelector('[data-quick-apply]').click();
   check(!dialog.open && count() > 10, 'configuration not applied');
   dialog = open(); check(dialog.querySelector('[data-rank-interval]').value === '500', 'configured interval not shown');
-  dialog.querySelector('[data-rank-action]').value = 'disable'; dialog.querySelector('[data-quick-next]').click();
+  dialog.querySelector('[data-rank-action]').value = 'disable'; change(dialog.querySelector('[data-rank-action]'));
+  check(dialog.querySelector('[data-rank-timing-options]').hidden && dialog.querySelector('[data-rank-interval]').disabled, 'disable kept irrelevant timing controls active');
+  dialog.querySelector('[data-quick-next]').click();
   await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'disable preview missing');
   check(dialog.textContent.includes('停用自动升星'), 'disable preview incorrect');
   dialog.querySelector('[data-quick-apply]').click();
   d.querySelector('[data-action="changes"]').click();
   const changes = d.querySelector('#changes-dialog');
   check(changes.open && changes.textContent.includes('rulesmo.ini') && changes.textContent.includes('artmo.ini'), 'cross-file export missing');
+  let exported; w.URL.createObjectURL = blob => { exported = blob; return 'blob:test'; }; w.HTMLAnchorElement.prototype.click = function() {};
+  const exportRules = [...changes.querySelectorAll('[data-export]')].find(button => button.parentElement.textContent.includes('rulesmo.ini'));
+  exportRules.click(); const savedRules = await exported.text();
+  check(/\[MRA1First\][\s\S]*?Duration=500/.test(savedRules) && /\[MRA1Second\][\s\S]*?Duration=1000/.test(savedRules), 'configured frame intervals were not preserved');
+  check(!savedRules.includes('GameSpeed=') && !savedRules.includes('customFps'), 'time estimate wrote game speed or manual FPS to rules');
   result.textContent = 'PASS: auto-rank form, validation, preview, cancellation, apply, disable and multi-file export';
  } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
 });

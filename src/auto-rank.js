@@ -31,6 +31,50 @@ const STOP_FIELDS = ['cellspread', 'verses', 'effectsrequireverses', 'affectsown
 const ANIM_FIELDS = ['image', 'visibleto', 'layer', 'rate', 'normalized', 'damage', 'usecentercoordsifattached', 'weapon', 'damage.dealtbyinvoker'];
 const WEAPON_FIELDS = ['damage', 'rof', 'range', 'projectile', 'speed', 'warhead'];
 
+// Mental Omega's lobby labels run from 0 (slowest) to 6 (fastest). The
+// engine/client use different caps for skirmish and network games at speed 5.
+// https://github.com/CnCNet/xna-cncnet-client/blob/develop/Docs/Migration-INI.md
+export const AUTO_RANK_SPEEDS = [
+  { id: '6', label: '6 最快' }, { id: '5', label: '5 很快' },
+  { id: '4', label: '4 快' }, { id: '3', label: '3 中等' },
+  { id: '2', label: '2 慢' }, { id: '1', label: '1 很慢' }, { id: '0', label: '0 最慢' },
+];
+const GAME_SPEED_CAPS = {
+  skirmish: { 0: 10, 1: 12, 2: 15, 3: 20, 4: 30, 5: 60, 6: null },
+  multiplayer: { 0: 10, 1: 12, 2: 15, 3: 20, 4: 30, 5: 45, 6: 60 },
+};
+
+export function estimateAutoRankTime({ interval, mode, speed, customFps = '' }) {
+  const raw = String(interval ?? '').trim(), fpsText = String(customFps ?? '').trim();
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1 || Number(raw) > 1073741823) return { status: 'invalid-interval' };
+  if (!Object.hasOwn(GAME_SPEED_CAPS, mode) || !Object.hasOwn(GAME_SPEED_CAPS[mode], speed)) return { status: 'invalid-speed' };
+  let fps = GAME_SPEED_CAPS[mode][speed];
+  if (fpsText) {
+    fps = Number(fpsText);
+    if (!Number.isFinite(fps) || fps < 1 || fps > 1000) return { status: 'invalid-fps' };
+  }
+  if (fps === null) return { status: 'unlimited' };
+  return { status: 'estimated', fps, custom: !!fpsText, firstSeconds: Number(raw) / fps, secondSeconds: Number(raw) * 2 / fps };
+}
+
+// A directory import can suggest the last saved lobby choice without claiming
+// to know the speed of a running game or a map that overrides that choice.
+export function savedSkirmishSpeed(project) {
+  const find = path => project.files.find(file => norm(file.path.replaceAll('\\', '/')) === norm(path));
+  const settings = find('Client/SkirmishSettings.ini'), options = find('Resources/GameOptions.ini');
+  if (!settings || !options) return null;
+  const settingsProject = new IniProject(project.files, settings.path), optionsProject = new IniProject(project.files, options.path);
+  if (settingsProject.warnings.length || optionsProject.warnings.length) return null;
+  if (!equal(value(optionsProject, 'cmbSkirmishGameSpeedCap', 'DataWriteMode'), 'Index')) return null;
+  const raw = value(settingsProject, 'GameOptions', 'cmbSkirmishGameSpeedCap');
+  if (!/^\d+$/.test(raw)) return null;
+  const items = value(optionsProject, 'cmbSkirmishGameSpeedCap', 'Items').split(',').map(item => item.trim());
+  if (items.some(item => !item)) return null;
+  const label = items[Number(raw)] || '';
+  const speed = label.match(/^([0-6])(?:\s|$)/)?.[1];
+  return speed ?? null;
+}
+
 export function isTransparentRankSprite(input) {
   if (!input) return false;
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);

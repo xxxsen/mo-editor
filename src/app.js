@@ -17,7 +17,7 @@ import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 import { detectPhobos } from './phobos-version.js';
 import { extraWarheadRows, prepareExtraWarheads } from './phobos-warheads.js';
-import { autoRankStatus, autoRankDrift, autoRankArtPath, prepareAutoRank } from './auto-rank.js';
+import { AUTO_RANK_SPEEDS, autoRankStatus, autoRankDrift, autoRankArtPath, estimateAutoRankTime, savedSkirmishSpeed, prepareAutoRank } from './auto-rank.js';
 
 const enc = new TextEncoder();
 const app = document.querySelector('#app');
@@ -1856,6 +1856,37 @@ function openQuickFeature() {
       info.textContent = quickReferenceInfo(project, kind, field?.value);
     });
   }
+  function updateRankSpeedOptions() {
+    const speed = details.querySelector('[data-rank-speed]'), mode = details.querySelector('[data-rank-mode]')?.value;
+    if (!speed || !mode) return;
+    for (const option of speed.options) {
+      const definition = AUTO_RANK_SPEEDS.find(item => item.id === option.value);
+      const estimate = estimateAutoRankTime({ interval: '1', mode, speed: option.value });
+      option.textContent = `${definition.label}（${estimate.status === 'unlimited' ? '无固定上限' : `${estimate.fps} 帧／秒`}）`;
+    }
+  }
+  function rankTimingMarkup() {
+    const estimate = estimateAutoRankTime({
+      interval: details.querySelector('[data-rank-interval]')?.value,
+      mode: details.querySelector('[data-rank-mode]')?.value,
+      speed: details.querySelector('[data-rank-speed]')?.value,
+      customFps: details.querySelector('[data-rank-fps]')?.value,
+    });
+    if (estimate.status === 'invalid-interval') return '<strong>请输入有效的间隔帧数</strong><p>等待帧数须为 1 至 1073741823 的整数。</p>';
+    if (estimate.status === 'invalid-fps') return '<strong>无法估算时间</strong><p>实际逻辑帧率须在 1 至 1000 之间；也可以留空使用速度档位的默认上限。</p>';
+    if (estimate.status === 'unlimited') return '<strong>当前速度没有固定上限</strong><p>无法直接换算现实时间；可在下方填写实测的逻辑帧率。</p>';
+    if (estimate.status !== 'estimated') return '<strong>请选择对局模式和游戏速度</strong>';
+    const seconds = number => number < 0.1 ? '不足 0.1 秒' : `约 ${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 }).format(number)} 秒`;
+    return `<strong>预计现实时间</strong><div class="rank-estimate-times"><span>第一次尝试 <b>${h(seconds(estimate.firstSeconds))}</b></span><span>第二次尝试（未满级） <b>${h(seconds(estimate.secondSeconds))}</b></span></div><p>${estimate.custom ? '按手动填写的实际逻辑帧率' : '按所选速度的默认上限'} ${h(estimate.fps)} 帧／秒估算。实际速度、动画和驻军暂停会影响时间。</p>`;
+  }
+  function updateRankEstimate() {
+    const action = details.querySelector('[data-rank-action]'), interval = details.querySelector('[data-rank-interval]');
+    const options = details.querySelector('[data-rank-timing-options]'), estimate = details.querySelector('[data-rank-estimate]');
+    if (!action || !interval || !options || !estimate) return;
+    const enabled = action.value === 'enable';
+    interval.disabled = !enabled; options.hidden = !enabled;
+    if (enabled) estimate.innerHTML = rankTimingMarkup();
+  }
   function drawFields() {
     if (activeFeature) drafts.set(activeFeature, [...details.childNodes]);
     const current = feature(); activeFeature = current.id;
@@ -1865,8 +1896,9 @@ function openQuickFeature() {
     }
     if (current.kind === 'auto-rank') {
       try {
-        const status = autoRankStatus(project, section);
-        details.innerHTML = `<p class="create-note">${h(current.description)}</p><div class="quick-fields"><label class="quick-field">操作<select data-rank-action><option value="enable">${status?.enabled ? '更新自动升星' : '启用自动升星'}</option>${status?.enabled ? '<option value="disable">停用自动升星</option>' : ''}</select></label><label class="quick-field">每次尝试的间隔（游戏帧）<input type="number" min="1" max="1073741823" step="1" data-rank-interval value="${h(status?.interval || '300')}"><span class="quick-field-source">例如 300 帧；从创建起分别在第 300、600 帧尝试。</span></label></div><p class="create-note">辅助对象的经验值按当前 Cost 和全局 VeteranRatio 计算；已有的附加效果会保留。应用后需要保存规则和美术文件。</p>`;
+        const status = autoRankStatus(project, section), savedSpeed = savedSkirmishSpeed(project), initialSpeed = savedSpeed ?? '5';
+        details.innerHTML = `<p class="create-note">${h(current.description)}</p><div class="quick-fields"><label class="quick-field">操作<select data-rank-action><option value="enable">${status?.enabled ? '更新自动升星' : '启用自动升星'}</option>${status?.enabled ? '<option value="disable">停用自动升星</option>' : ''}</select></label><label class="quick-field">每次尝试的间隔（游戏帧）<input type="number" min="1" max="1073741823" step="1" data-rank-interval value="${h(status?.interval || '300')}"><span class="quick-field-source">从单位创建起分别在间隔的 1 倍、2 倍帧数尝试。</span></label></div><div data-rank-timing-options><div class="quick-fields rank-speed-fields"><label class="quick-field">对局模式<select data-rank-mode><option value="skirmish">单人／遭遇战</option><option value="multiplayer">联机对战</option></select></label><label class="quick-field">游戏速度<select data-rank-speed>${AUTO_RANK_SPEEDS.map(speed => `<option value="${speed.id}" ${speed.id === initialSpeed ? 'selected' : ''}>${h(speed.label)}</option>`).join('')}</select><span class="quick-field-source">${savedSpeed ? '默认读取导入时保存的遭遇战速度；请核对当前对局。' : '默认选择 5 很快；请按当前对局调整。'}</span></label></div><div class="rank-estimate" data-rank-estimate role="status" aria-live="polite"></div><details class="rank-fps-advanced"><summary>自定义实际逻辑帧率</summary><label class="quick-field">实际逻辑帧率（帧／秒）<input type="number" min="1" max="1000" step="any" data-rank-fps placeholder="留空使用档位默认上限"><span class="quick-field-source">适用于无限速、自定义速度或已知实际帧率；游戏逻辑帧率可能与画面刷新率不同。</span></label></details><p class="create-note">对局模式、游戏速度和实际帧率仅用于估算，不会修改游戏设置。游戏内变速、地图限制或卡顿可能影响结果。</p></div><p class="create-note">辅助对象的经验值按当前 Cost 和全局 VeteranRatio 计算；已有的附加效果会保留。应用后需要保存规则和美术文件。</p>`;
+        updateRankSpeedOptions(); updateRankEstimate();
       } catch (error) { details.innerHTML = `<p class="quick-field-risk">${h(error.message)}</p>`; }
       return;
     }
@@ -1917,6 +1949,13 @@ function openQuickFeature() {
     const chosen = [...pickerState.selected.values()];
     const value = !pickerState.dirty ? pickerState.raw : pickerState.multiple ? (chosen.length ? mergeSelections(pickerState.raw, chosen) : '') : chosen[0] || '';
     pickerState.onApply(value); closePicker();
+  });
+  details.addEventListener('input', event => {
+    if (event.target.matches('[data-rank-interval], [data-rank-fps]')) updateRankEstimate();
+  });
+  details.addEventListener('change', event => {
+    if (event.target.matches('[data-rank-mode]')) updateRankSpeedOptions();
+    if (event.target.matches('[data-rank-action], [data-rank-mode], [data-rank-speed], [data-rank-interval], [data-rank-fps]')) updateRankEstimate();
   });
   details.addEventListener('click', event => {
     const button = event.target.closest('button');
@@ -1997,7 +2036,9 @@ function openQuickFeature() {
         return `<div class="quick-change"><div>${label}<small>[${h(where)}] · ${action} · ${h(location)}</small></div><div class="quick-change-values"><span>${h(before)}</span><span aria-hidden="true">→</span><strong>${h(change.kind === 'remove' ? '未配置' : change.after || '空值')}</strong></div></div>`;
       }).join('') : '<p class="create-note">当前设置没有产生修改。</p>';
       const warnings = plan.warnings.length ? `<div class="quick-warnings"><strong>请留意</strong><ul>${plan.warnings.map(warning => `<li>${h(warning)}</li>`).join('')}</ul></div>` : '';
-      preview.innerHTML = `<p><strong>${h(plan.feature.label)}</strong> · [${h(section)}]</p><p>确认后加入未保存的修改；点击主界面的「保存」后才会写入文件。</p><div class="quick-changes">${changes}</div>${warnings}`;
+      const rankTiming = feature().kind === 'auto-rank' && details.querySelector('[data-rank-action]')?.value === 'enable'
+        ? `<div class="rank-estimate rank-preview-estimate" data-rank-preview-estimate>${rankTimingMarkup()}</div>` : '';
+      preview.innerHTML = `<p><strong>${h(plan.feature.label)}</strong> · [${h(section)}]</p><p>确认后加入未保存的修改；点击主界面的「保存」后才会写入文件。</p>${rankTiming}<div class="quick-changes">${changes}</div>${warnings}`;
       form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
       editorDialog.querySelector('[data-editor-error]')?.remove(); apply.focus({ preventScroll: true });
     } catch (error) { if (editorDialog.open) showEditorError(error.message); }
