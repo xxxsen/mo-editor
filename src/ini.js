@@ -226,6 +226,30 @@ export class IniProject {
     this.rebuild();
   }
 
+  // Append generated ASCII definitions in one pass. Rebuilding once is important for
+  // large game INIs, and the normal change/backup flow still sees every new line.
+  appendGeneratedSections(definitions, file) {
+    if (!this.files.includes(file) || !this.loadOrder.includes(file)) throw new Error('目标文件不在当前加载的规则中。');
+    const seen = new Set(), lines = [];
+    for (const [name, fields] of definitions) {
+      const id = keyOf(name);
+      if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) || this.section(name) || seen.has(id)) throw new Error(`规则段 [${name}] 已存在或名称无效。`);
+      seen.add(id);
+      const header = parseLine(encoder.encode(`[${name}]`), file.newline, file.decoder);
+      header.addedSection = true;
+      lines.push(header);
+      for (const [key, rawValue] of Object.entries(fields)) {
+        const value = String(rawValue);
+        if (!/^[A-Za-z0-9_.$-]+$/.test(key) || /[^\x20-\x7e]|[;\r\n]/.test(value)) throw new Error(`无法安全生成 [${name}] 的属性 ${key}。`);
+        const line = parseLine(encoder.encode(`${key}=`), file.newline, file.decoder);
+        line.added = true;
+        line.patch = value;
+        lines.push(line);
+      }
+    }
+    if (lines.length) { insertLines(file, file.lines.length, lines); this.rebuild(); }
+  }
+
   // Type registries must be appended, not inserted at the start of the section.
   appendEntry(sectionName, key, value, fallbackFile) {
     if (!this.section(sectionName)) this.createSection(sectionName, fallbackFile);

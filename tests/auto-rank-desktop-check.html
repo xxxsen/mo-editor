@@ -1,0 +1,74 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Auto rank desktop save check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" width="1200" height="800"></iframe>
+<script type="module">
+import { hashMixFilename } from '../src/resources.js';
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const enc = new TextEncoder(), dec = new TextDecoder(), bytes = text => enc.encode(text);
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function wait(fn, message) { for (let i = 0; i < 300; i++) { if (fn()) return; await delay(20); } throw new Error(message); }
+function mix(entries) {
+  const start = 10 + entries.length * 12, length = entries.reduce((n, [, b]) => n + b.length, 0);
+  const out = new Uint8Array(start + length), view = new DataView(out.buffer); view.setUint16(4, entries.length, true); view.setUint32(6, length, true);
+  let offset = 0;
+  entries.forEach(([name, data], i) => { const at = 10 + i * 12; view.setUint32(at, hashMixFilename(name), true); view.setUint32(at + 4, offset, true); view.setUint32(at + 8, data.length, true); out.set(data, start + offset); offset += data.length; });
+  return out;
+}
+const sprite = new Uint8Array(104); new DataView(sprite.buffer).setUint16(6, 4, true);
+const pack = mix([['artmo.ini', bytes('[OLD]\nImage=OLD\n')], ['INVISOX.SHP', sprite]]);
+const originalRules = bytes('[General]\nVeteranRatio=4.5\n[AudioVisual]\n[VehicleTypes]\n0=TANK\n[Invisible]\nInviso=yes\n[TANK]\nName=Tank\nCost=1000\n');
+const disks = { game: new Map([['rulesmo.ini', originalRules.slice()], ['expandmo99.mix', pack.slice()]]), output: new Map() };
+const describe = id => ({ sessionId: id, directory: id === 'game' ? 'D:\\Game' : 'D:\\Output', files: [...disks[id]].map(([path, data]) => ({ path, name: path, size: data.length })) });
+const hash = async data => data ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(x => x.toString(16).padStart(2, '0')).join('') : null;
+let pending = null, writes = [];
+window.mockInvoke = async (command, payload, options) => {
+ if (command === 'open_recent_directory') return null;
+ if (command === 'pick_game_directory') return describe('game');
+ if (command === 'pick_output_directory') return describe('output');
+ if (command === 'remember_directory' || command === 'prepare_export_directories') return;
+ if (command === 'read_game_file') return disks[payload.sessionId].get(payload.path).slice(payload.start, payload.end).buffer;
+ if (command === 'prepare_save') {
+  for (const entry of payload.entries) if (await hash(disks[payload.sessionId].get(entry.path)) !== entry.expectedHash) throw Error('conflict');
+  pending = { id: payload.sessionId, entries: payload.entries, staged: [] }; return 'tx';
+ }
+ if (command === 'stage_save_file') { pending.staged[Number(options.headers['x-file-index'])] = new Uint8Array(payload).slice(); return; }
+ if (command === 'commit_save') { writes.push({ id: pending.id, paths: pending.entries.map(entry => entry.path) }); pending.entries.forEach((entry, i) => disks[pending.id].set(entry.path, pending.staged[i])); return; }
+ if (command === 'abort_save') return;
+ throw Error(`unexpected command ${command}`);
+};
+frame.addEventListener('load', async () => { try {
+ const w = frame.contentWindow, d = frame.contentDocument;
+ await wait(() => !d.querySelector('#app').inert && d.querySelector('[data-action="folder"]'), 'desktop not ready');
+ d.querySelector('[data-action="folder"]').click();
+ await wait(() => d.querySelector('.detail-name h2')?.textContent === 'Tank' && !d.querySelector('#app').inert, 'game not opened');
+ d.querySelector('[data-action="quick-feature"]').click(); const dialog = d.querySelector('#editor-dialog'), select = dialog.querySelector('#quick-feature-type');
+ select.value = 'auto-rank'; select.dispatchEvent(new w.Event('change', { bubbles: true })); dialog.querySelector('[data-quick-next]').click();
+ await wait(() => !dialog.querySelector('[data-quick-preview]').hidden, 'auto rank preview failed'); dialog.querySelector('[data-quick-apply]').click();
+ disks.game.set('artmo.ini', bytes('external modification'));
+ d.querySelector('[data-action="save"]').click(); await wait(() => !d.querySelector('#app').inert && d.querySelector('#toast').textContent.includes('conflict'), 'conflict did not stop save');
+ check(!writes.length && dec.decode(disks.game.get('rulesmo.ini')) === dec.decode(originalRules), 'conflict partially wrote rules');
+ disks.game.delete('artmo.ini');
+ d.querySelector('[data-action="save"]').click(); await wait(() => writes.length === 1 && !d.querySelector('#app').inert, 'save failed');
+ check(writes[0].id === 'game' && writes[0].paths.includes('rulesmo.ini') && writes[0].paths.includes('artmo.ini'), 'rules and art were not saved in one transaction');
+ check(dec.decode(disks.game.get('rulesmo.ini')).includes('AttachEffect.AttachTypes=MRA1First,MRA1Second'), 'rules were not saved');
+ check(dec.decode(disks.game.get('artmo.ini')).includes('[MRA1SpawnA]'), 'packed art override was not saved');
+ check((await hash(disks.game.get('expandmo99.mix'))) === (await hash(pack)), 'MIX was modified');
+ d.querySelector('[data-action="folder"]').click(); await wait(() => d.querySelector('#toast').textContent.includes('已导入') && !d.querySelector('#app').inert, 'reload failed');
+ d.querySelector('[data-entity="TANK"]').click();
+ const cost = d.querySelector('[data-field="Cost"]'); cost.value = '1500'; cost.dispatchEvent(new w.Event('change', { bubbles: true })); await delay(50);
+ function selectMain(name) { d.querySelector('[data-action="choose-main"]').click(); const main = d.querySelector('#editor-dialog'); [...main.querySelectorAll('[data-main-file]')].find(button => button.textContent.includes(name)).click(); }
+ selectMain('artmo.ini'); d.querySelector('[data-action="save"]').click();
+ await wait(() => d.querySelector('#toast').textContent.includes('造价或 VeteranRatio'), 'switching main bypassed auto-rank cost validation');
+ check(writes.length === 1, 'stale helper cost was saved after switching main');
+ selectMain('rulesmo.ini'); d.querySelector('[data-entity="TANK"]').click();
+ d.querySelector('[data-action="quick-feature"]').click();
+ const rank = d.querySelector('#editor-dialog'), rankSelect = rank.querySelector('#quick-feature-type'); rankSelect.value = 'auto-rank'; rankSelect.dispatchEvent(new w.Event('change', { bubbles: true })); rank.querySelector('[data-quick-next]').click();
+ await wait(() => !rank.querySelector('[data-quick-preview]').hidden, 'recalculation preview failed'); rank.querySelector('[data-quick-apply]').click();
+ d.querySelector('[data-action="save"]').click(); await wait(() => writes.length === 2 && !d.querySelector('#app').inert, 'recalculated cost save failed');
+ check(dec.decode(disks.game.get('rulesmo.ini')).includes('Cost=6750'), 'helper cost was not recalculated');
+ d.querySelector('[data-action="save-as"]').click(); await wait(() => writes.length === 3 && !d.querySelector('#app').inert, 'export failed');
+ check(writes[2].id === 'output' && writes[2].paths.includes('rulesmo.ini') && writes[2].paths.includes('artmo.ini'), 'export omitted art after reload');
+ result.textContent = 'PASS: auto-rank packed resources, conflict handling, atomic save and export after reload';
+} catch (error) { result.textContent = `FAIL: ${error.message}; toast=${frame.contentDocument.querySelector('#toast')?.textContent}; writes=${JSON.stringify(writes)}\n${error.stack}`; } });
+frame.src = 'desktop-fixture.html';
+</script></body></html>

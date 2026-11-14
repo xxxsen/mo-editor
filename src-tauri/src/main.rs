@@ -99,7 +99,8 @@ fn scan_directory(root: &Path) -> Result<Vec<LocalFileInfo>> {
                 || (is_root
                     && (extension == "mix"
                         || extension == "csf"
-                        || name.eq_ignore_ascii_case("Phobos.dll"))))
+                        || name.eq_ignore_ascii_case("Phobos.dll")
+                        || name.eq_ignore_ascii_case("INVISOX.SHP"))))
             {
                 continue;
             }
@@ -253,6 +254,7 @@ fn read_game_file(
         .to_ascii_lowercase();
     if !matches!(ext.as_str(), "ini" | "mix" | "csf" | "pcx")
         && !path.eq_ignore_ascii_case("Phobos.dll")
+        && !path.eq_ignore_ascii_case("INVISOX.SHP")
     {
         return Err("不支持读取该文件类型".into());
     }
@@ -404,9 +406,11 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("pHoBoS.DLL"), b"metadata").unwrap();
         fs::write(dir.path().join("Ares.dll"), b"other").unwrap();
+        fs::write(dir.path().join("Invisox.shp"), b"sprite").unwrap();
         fs::write(dir.path().join("rulesmo.ini"), b"[General]").unwrap();
         fs::create_dir(dir.path().join("nested")).unwrap();
         fs::write(dir.path().join("nested").join("Phobos.dll"), b"nested").unwrap();
+        fs::write(dir.path().join("nested").join("INVISOX.SHP"), b"nested").unwrap();
         let paths: Vec<_> = scan_directory(dir.path())
             .unwrap()
             .into_iter()
@@ -414,7 +418,9 @@ mod tests {
             .collect();
         assert!(paths.iter().any(|path| path == "pHoBoS.DLL"));
         assert!(paths.iter().any(|path| path == "rulesmo.ini"));
+        assert!(paths.iter().any(|path| path == "Invisox.shp"));
         assert!(!paths.iter().any(|path| path == "Ares.dll"));
         assert!(!paths.iter().any(|path| path == "nested/Phobos.dll"));
+        assert!(!paths.iter().any(|path| path == "nested/INVISOX.SHP"));
     }
 }

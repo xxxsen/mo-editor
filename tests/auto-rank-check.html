@@ -1,0 +1,53 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Auto rank check</title></head>
+<body><pre id="result">RUNNING</pre><iframe id="subject" src="../" width="1200" height="800"></iframe>
+<script>
+const result = document.querySelector('#result'), frame = document.querySelector('#subject');
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(predicate, message) { for (let i = 0; i < 300; i++) { if (predicate()) return; await delay(10); } throw new Error(message); }
+frame.addEventListener('load', async () => {
+ try {
+  const w = frame.contentWindow, d = frame.contentDocument;
+  const rules = '[General]\nVeteranRatio=4.5\n[AudioVisual]\n[VehicleTypes]\n0=TANK\n[Invisible]\nInviso=yes\n[TANK]\nName=Tank\nCost=1000\n';
+  const sprite = new Uint8Array(104); new DataView(sprite.buffer).setUint16(6, 4, true);
+  const transfer = new w.DataTransfer();
+  for (const [name, data] of [['rulesmo.ini', rules], ['artmo.ini', '[OLD]\nImage=OLD\n'], ['INVISOX.SHP', sprite]]) transfer.items.add(new w.File([data], name));
+  const input = d.querySelector('#file-input'); input.files = transfer.files; input.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await waitFor(() => d.querySelector('[data-entity="TANK"]'), 'fixture did not load');
+  d.querySelector('[data-entity="TANK"]').click();
+  const count = () => Number(d.querySelector('[data-action="changes"] .badge-count')?.textContent || '0');
+  function open() {
+    d.querySelector('[data-action="quick-feature"]').click();
+    const dialog = d.querySelector('#editor-dialog'), select = dialog.querySelector('#quick-feature-type');
+    select.value = 'auto-rank'; select.dispatchEvent(new w.Event('change', { bubbles: true })); return dialog;
+  }
+  let dialog = open();
+  check(dialog.textContent.includes('进入载具') && dialog.querySelector('[data-rank-interval]').value === '300', 'form or default interval missing');
+  dialog.querySelector('[data-rank-interval]').value = '0'; dialog.querySelector('[data-quick-next]').click();
+  await waitFor(() => dialog.querySelector('[role="alert"]'), 'invalid interval not rejected');
+  check(count() === 0, 'invalid preview modified draft');
+  dialog.querySelector('[data-rank-interval]').value = '500'; dialog.querySelector('[data-quick-next]').click();
+  await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'preview missing');
+  check(dialog.textContent.includes('MRA1Helper') && dialog.textContent.includes('artmo.ini') && dialog.textContent.includes('规则段'), 'generated definitions or art are missing from preview');
+  check(dialog.textContent.includes('造价') && dialog.textContent.includes('Phobos'), 'limitations not displayed');
+  check(count() === 0, 'preview modified draft');
+  dialog.querySelector('[data-quick-back]').click();
+  check(dialog.querySelector('[data-rank-interval]').value === '500', 'return lost interval');
+  dialog.querySelector('[data-quick-next]').click(); await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'second preview missing');
+  dialog.querySelector('[data-editor-close]').click(); check(count() === 0, 'cancel changed draft');
+  dialog = open(); dialog.querySelector('[data-rank-interval]').value = '500'; dialog.querySelector('[data-quick-next]').click();
+  await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'apply preview missing');
+  dialog.querySelector('[data-quick-apply]').click();
+  check(!dialog.open && count() > 10, 'configuration not applied');
+  dialog = open(); check(dialog.querySelector('[data-rank-interval]').value === '500', 'configured interval not shown');
+  dialog.querySelector('[data-rank-action]').value = 'disable'; dialog.querySelector('[data-quick-next]').click();
+  await waitFor(() => !dialog.querySelector('[data-quick-preview]').hidden, 'disable preview missing');
+  check(dialog.textContent.includes('停用自动升星'), 'disable preview incorrect');
+  dialog.querySelector('[data-quick-apply]').click();
+  d.querySelector('[data-action="changes"]').click();
+  const changes = d.querySelector('#changes-dialog');
+  check(changes.open && changes.textContent.includes('rulesmo.ini') && changes.textContent.includes('artmo.ini'), 'cross-file export missing');
+  result.textContent = 'PASS: auto-rank form, validation, preview, cancellation, apply, disable and multi-file export';
+ } catch (error) { result.textContent = 'FAIL: ' + error.stack; }
+});
+</script></body></html>

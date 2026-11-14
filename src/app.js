@@ -17,6 +17,7 @@ import * as desktop from './desktop.js';
 import { fitStartupWindow } from './startup-window.js';
 import { detectPhobos } from './phobos-version.js';
 import { extraWarheadRows, prepareExtraWarheads } from './phobos-warheads.js';
+import { autoRankStatus, autoRankDrift, autoRankArtPath, prepareAutoRank } from './auto-rank.js';
 
 const enc = new TextEncoder();
 const app = document.querySelector('#app');
@@ -242,12 +243,25 @@ function matchingGlobalFields(query) {
 }
 function markChanges() { return state.project.changes(); }
 
+// Drafts can span several selected main files; validating only the currently
+// visible graph would let a switch to artmo.ini bypass rule cost checks.
+function projectAutoRankProblems(project) {
+  const problems = [];
+  for (const path of new Set([project.mainPath, ...state.visitedMainPaths])) {
+    const context = lower(path) === lower(project.mainPath) ? project : new IniProject(project.files, path);
+    for (const problem of autoRankDrift(context)) problems.push(`[${path}] ${problem}`);
+  }
+  return problems;
+}
+
 function noticeMarkup() {
   const warnings = [...state.project.warnings, ...(state.resources?.notes || [])];
   let out = '';
   if (warnings.length) {
     out += `<div class="notice warning">${icon('info', 16)}<div><strong>加载结果可能不完整。</strong> 当前结果只反映已解析的文件；${h(warnings.slice(0, 2).join(' '))}${warnings.length > 2 ? ` 另有 ${warnings.length - 2} 项。` : ''}</div></div>`;
   }
+  const rankProblems = projectAutoRankProblems(state.project);
+  if (rankProblems.length) out += `<div class="notice warning">${icon('info', 16)}<div><strong>自动升星配置需要更新。</strong> ${h(rankProblems.slice(0, 2).join(' '))}${rankProblems.length > 2 ? ` 另有 ${rankProblems.length - 2} 项。` : ''}</div></div>`;
   if (state.demo && state.notice) {
     out += `<div class="notice">${icon('info', 16)}<div><strong>你正在浏览虚构的演示数据。</strong> 导入自己的规则文件后，即可查看和修改真实配置。</div><button class="close" data-action="dismiss" aria-label="关闭提示">×</button></div>`;
   }
@@ -1390,6 +1404,8 @@ async function saveDesktopProject() {
     return;
   }
   const project = state.project;
+  const rankProblems = projectAutoRankProblems(project);
+  if (rankProblems.length) { showToast(rankProblems[0]); return; }
   const changed = [...new Set(markChanges().map(change => change.file))];
   const incomplete = dirtyProjectWarnings(project, state.visitedMainPaths, changed);
   if (incomplete.length) {
@@ -1424,6 +1440,8 @@ async function exportDesktopProject() {
   if (!current) return;
   if (state.project.warnings.length) { showToast(`规则加载不完整，暂不能另存：${state.project.warnings[0]}`); return; }
   const project = state.project;
+  const rankProblems = projectAutoRankProblems(project);
+  if (rankProblems.length) { showToast(rankProblems[0]); return; }
   app.inert = true;
   try {
     const destination = await desktop.pickOutputDirectory();
@@ -1432,6 +1450,12 @@ async function exportDesktopProject() {
     showToast('正在生成规则版本，请稍候。');
     const existing = new Map(desktop.localFiles(destination).map(file => [lower(file.path), file]));
     const projectFiles = [...new Set(project.loadOrder)];
+    const artPath = autoRankArtPath(project);
+    if (artPath) {
+      const art = new IniProject(project.files, artPath);
+      for (const file of art.loadOrder) if (!projectFiles.includes(file)) projectFiles.push(file);
+    }
+    for (const change of project.changes()) if (!projectFiles.includes(change.file)) projectFiles.push(change.file);
     const conflicts = projectFiles.filter(file => existing.has(lower(file.path)));
     if (conflicts.length && !confirm(`输出目录已有 ${conflicts.length} 个同名规则文件。继续将覆盖这些文件，并自动备份原文件。`)) return;
     const files = await Promise.all(projectFiles.map(async file => {
@@ -1839,6 +1863,13 @@ function openQuickFeature() {
     if (current.kind === 'passenger-fire') {
       details.innerHTML = passengerMarkup(); drawPassengerWeapons(details); return;
     }
+    if (current.kind === 'auto-rank') {
+      try {
+        const status = autoRankStatus(project, section);
+        details.innerHTML = `<p class="create-note">${h(current.description)}</p><div class="quick-fields"><label class="quick-field">操作<select data-rank-action><option value="enable">${status?.enabled ? '更新自动升星' : '启用自动升星'}</option>${status?.enabled ? '<option value="disable">停用自动升星</option>' : ''}</select></label><label class="quick-field">每次尝试的间隔（游戏帧）<input type="number" min="1" max="1073741823" step="1" data-rank-interval value="${h(status?.interval || '300')}"><span class="quick-field-source">例如 300 帧；从创建起分别在第 300、600 帧尝试。</span></label></div><p class="create-note">辅助对象的经验值按当前 Cost 和全局 VeteranRatio 计算；已有的附加效果会保留。应用后需要保存规则和美术文件。</p>`;
+      } catch (error) { details.innerHTML = `<p class="quick-field-risk">${h(error.message)}</p>`; }
+      return;
+    }
     const fields = quickFeatureFields(project, section, current);
     const rows = current.id === 'payload' ? payloadMarkup(fields) : `<div class="quick-fields">${fields.map(fieldMarkupQuick).join('')}</div>`;
     const weaponWarning = current.id === 'garrison' ? garrisonWeaponWarning(project, section) : '';
@@ -1934,12 +1965,20 @@ function openQuickFeature() {
     plan = null; form.hidden = false; preview.hidden = true; back.hidden = true; apply.hidden = true; next.hidden = false;
     editorDialog.querySelector('[data-editor-error]')?.remove(); next.focus({ preventScroll: true });
   });
-  next.addEventListener('click', () => {
+  next.addEventListener('click', async () => {
+    next.disabled = true;
     try {
       if (state.project !== project || state.selected !== section) throw new Error('当前项目或对象已改变，请重新打开快捷功能。');
       if (feature().kind === 'passenger-fire') {
         const selections = Object.fromEntries([...details.querySelectorAll('[data-fire-weapon]')].map(input => [input.dataset.fireWeapon, input.value]));
         plan = preparePassengerFire(project, { type: entity.type, section, passenger: details.querySelector('[data-passenger-id]')?.value, mode: details.querySelector('[data-fire-mode]')?.value, selections, reservedIds: state.entities.map(item => item.id) });
+      } else if (feature().kind === 'auto-rank') {
+        const action = details.querySelector('[data-rank-action]')?.value;
+        const sprite = action === 'enable' ? await state.resources?.findFile('INVISOX.SHP') : null;
+        if (!editorDialog.open || state.project !== project || state.selected !== section || feature().kind !== 'auto-rank') return;
+        plan = prepareAutoRank(project, { type: entity.type, section, action, interval: details.querySelector('[data-rank-interval]')?.value, spriteBytes: sprite?.bytes });
+        if (!state.phobos || state.phobos.status !== 'detected') plan.warnings.unshift('未能从目录确认 Phobos 版本；请确认游戏加载了 Phobos 0.4.0.2。');
+        else if (state.phobos.version !== '0.4.0.2') plan.warnings.unshift(`当前检测到 Phobos ${state.phobos.version}；该方案基于 0.4.0.2 验证，请在游戏中确认兼容性。`);
       } else {
         const values = feature().id === 'payload' ? readPayload(details.querySelector('[data-quick-payload]')) : Object.fromEntries([...details.querySelectorAll('[data-quick-field]')].map(input => [input.dataset.quickField, input.value]));
         plan = prepareQuickFeature(project, { featureId: feature().id, type: entity.type, section, values });
@@ -1953,19 +1992,24 @@ function openQuickFeature() {
         const info = change.type === 'weapon' ? getFieldInfo(change.key, { type: 'weapon', section: where }) : change.type === 'global' ? getFieldInfo(change.key, { type: 'global', section: where }) : fieldInfoFor(entity, change.key || '');
         const before = change.before === null ? '未配置' : change.before || '空值';
         const location = change.file ? `${sourceName(change.file)}${change.file.sourceArchive ? '（保存为独立 INI）' : ''}` : '';
-        const label = change.kind === 'copy' ? `复制武器 [${h(change.before)}]` : fieldNameMarkup(info, change.key);
-        const action = change.kind === 'remove' ? '移除定义' : change.kind === 'copy' || change.before === null ? '新增' : '修改';
+        const label = change.kind === 'section' ? `规则段 [${h(where)}]` : change.kind === 'copy' ? `复制武器 [${h(change.before)}]` : fieldNameMarkup(info, change.key);
+        const action = change.kind === 'remove' ? '移除定义' : change.kind === 'copy' || change.kind === 'section' || change.before === null ? '新增' : '修改';
         return `<div class="quick-change"><div>${label}<small>[${h(where)}] · ${action} · ${h(location)}</small></div><div class="quick-change-values"><span>${h(before)}</span><span aria-hidden="true">→</span><strong>${h(change.kind === 'remove' ? '未配置' : change.after || '空值')}</strong></div></div>`;
       }).join('') : '<p class="create-note">当前设置没有产生修改。</p>';
       const warnings = plan.warnings.length ? `<div class="quick-warnings"><strong>请留意</strong><ul>${plan.warnings.map(warning => `<li>${h(warning)}</li>`).join('')}</ul></div>` : '';
       preview.innerHTML = `<p><strong>${h(plan.feature.label)}</strong> · [${h(section)}]</p><p>确认后加入未保存的修改；点击主界面的「保存」后才会写入文件。</p><div class="quick-changes">${changes}</div>${warnings}`;
       form.hidden = true; preview.hidden = false; back.hidden = false; next.hidden = true; apply.hidden = false;
       editorDialog.querySelector('[data-editor-error]')?.remove(); apply.focus({ preventScroll: true });
-    } catch (error) { showEditorError(error.message); }
+    } catch (error) { if (editorDialog.open) showEditorError(error.message); }
+    finally { next.disabled = false; }
   });
   apply.addEventListener('click', () => {
     if (!plan || state.project !== project || state.selected !== section) { showEditorError('当前项目或对象已改变，请重新预览。'); return; }
-    if (plan.changes.length) { state.project = plan.project; state.changedSections = new Set(markChanges().map(change => lower(change.section))); }
+    if (plan.changes.length) {
+      state.project = plan.project;
+      if (plan.artPath) state.visitedMainPaths.add(plan.artPath);
+      state.changedSections = new Set(markChanges().map(change => lower(change.section)));
+    }
     editorDialog.close(); render();
     showToast(plan.changes.length ? `已添加 ${plan.feature.label} 的 ${plan.changes.length} 项修改；点击保存后写入规则文件。` : '当前设置没有产生修改。');
   });
@@ -2358,6 +2402,8 @@ function openAddField() {
 }
 
 function showChanges() {
+  const rankProblems = projectAutoRankProblems(state.project);
+  if (rankProblems.length) { showToast(rankProblems[0]); return; }
   historyInstance++; dialog.classList.remove('history-dialog');
   const changes = markChanges();
   const files = [...new Set(changes.map(change => change.file))];

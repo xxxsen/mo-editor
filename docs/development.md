@@ -29,6 +29,7 @@ npm run desktop:build
 | `src/ini.js`、`src/resources.js` | INI 解析与保留原格式的序列化；MIX、CSF、PCX 等资源读取 |
 | `src/field-metadata.js`、`src/field-catalog.js`、`src/enum-options.js`、`src/rule-schema.js` | 字段中文说明、可添加字段、选项和规则目录 |
 | `src/quick-features.js` | 快捷功能的适用类型、字段、建议值和预览校验 |
+| `src/auto-rank.js` | 自动升星的规则与美术生成、附加效果兼容和造价校验 |
 | `src/phobos-fields.js`、`src/phobos-warhead-fields.js`、`src/phobos-version.js`、`src/phobos-warheads.js` | Phobos 字段字典、DLL 版本读取及额外弹头的有序配置 |
 | `src/object-creation.js`、`src/object-impact.js`、`src/weapon-references.js`、`src/warhead-superweapons.js`、`src/warhead-references.js` | 对象创建、关联复制和规则对象引用 |
 | `src/rule-analysis.js`、`src/history-diff.js` | 建造与武器对照、历史快照差异 |
@@ -59,7 +60,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 - `browser-check.html`、`desktop-check.html`：导入、编辑、保存、备份、恢复及多文件处理。
 - `navigation-check.html`、`scroll-check.html`、`superweapon-ime-check.html`：导航、滚动位置和中文输入。
 - `object-creation-check.html`、`projectile-check.html`、`weapon-warheads-check.html`：新增对象及武器、弹头、投射物关联。
-- `quick-features-check.html`、`quick-features-extended-check.html`、`tech-buildings-check.html`、`quick-default-reset-check.html`：快捷功能、科技建筑及恢复默认值。
+- `quick-features-check.html`、`quick-features-extended-check.html`、`tech-buildings-check.html`、`quick-default-reset-check.html`、`auto-rank-check.html`、`auto-rank-desktop-check.html`：快捷功能、自动升星、科技建筑及恢复默认值。
 - `analysis-check.html`：建造条件、武器效果和关联复制。
 - `phobos-check.html`、`phobos-desktop-check.html`、`warhead-launchsw-check.html`、`warhead-references-check.html`：护盾选择、额外弹头、弹头关联、尾迹及跨主文件的桌面保存保护。
 - `field-catalog-check.html`、`field-metadata-check.html`、`enum-choice-check.html`：字段目录、中文说明和选项编辑。

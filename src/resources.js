@@ -156,13 +156,14 @@ function archivePriority(file) {
 }
 
 export class GameResources {
-  constructor(strings, art, archives, pcxFiles, notes, clientSides = []) {
+  constructor(strings, art, archives, pcxFiles, notes, clientSides = [], rankSprite = null) {
     this.strings = strings;
     this.art = art;
     this.archives = archives;
     this.pcxFiles = pcxFiles;
     this.notes = notes;
     this.clientSides = clientSides;
+    this.rankSprite = rankSprite;
     this.icons = new Map();
   }
   static async load(files) {
@@ -204,9 +205,14 @@ export class GameResources {
     for (const file of ordered.filter(item => /\.pcx$/i.test(item.name))) {
       if (!pcxFiles.has(lower(file.name))) pcxFiles.set(lower(file.name), file);
     }
-    return new GameResources(strings, art, archives, pcxFiles, notes, clientSides);
+    const rankSprite = ordered.find(file => pathDepth(file) === 1 && lower(file.name) === 'invisox.shp') || null;
+    return new GameResources(strings, art, archives, pcxFiles, notes, clientSides, rankSprite);
   }
   async findFile(name) {
+    // A loose file takes priority over MIX contents in the game itself.
+    if (lower(name) === 'invisox.shp' && this.rankSprite) {
+      return { bytes: new Uint8Array(await this.rankSprite.arrayBuffer()), archive: '' };
+    }
     for (const archive of this.archives) {
       if (!archive.has(name)) continue;
       const bytes = await archive.read(name);

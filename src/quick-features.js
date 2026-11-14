@@ -235,6 +235,10 @@ export const QUICK_FEATURES = [
     description: '检查乘员普通及精英武器能否在开放式载具内开火，并可修改相关武器。',
     fields: [],
   },
+  {
+    id: 'auto-rank', label: '自动升星', types: technos, kind: 'auto-rank',
+    description: '为步兵、载具、飞机或建筑添加自动升星。进入载具或驻军时暂停，出来后恢复。', fields: [],
+  },
 ];
 
 const normalize = value => String(value ?? '').trim().toLowerCase();
